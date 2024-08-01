@@ -1,0 +1,72 @@
+syntax="proto2";
+package gcache;
+
+option cc_generic_services = true;
+
+message GetEntryRequest {
+    required string key = 1;
+    required uint64 start = 2;
+    required uint64 length = 3;
+};
+
+message GetEntryResponse {
+    required int32 status_code = 1;
+    optional bytes data = 2; 
+};
+
+message PutEntryRequest {
+    required string key = 1;
+    required uint64 length = 2;
+    optional bytes data = 3; 
+};
+
+message PutEntryResponse {
+    required int32 status_code = 1;
+    optional string internal_key = 2;  // for write cache
+};
+
+message DeleteEntryRequest {
+    required string key = 1;           // actually 'prefix'
+    optional uint64 chunk_size = 2;
+    optional uint64 max_chunk_id = 3;
+};
+
+message DeleteEntryRequestForWriteCache {
+    required string key_prefix = 1;
+    required uint64 max_ts = 2;
+    repeated string except_keys = 3;
+};
+
+message DeleteEntryResponse {
+    required int32 status_code = 1;
+};
+
+message RegisterRequest {
+    // nothing
+};
+
+message QueryTsRequest {
+    // nothing
+};
+
+message QueryTsResponse {
+    required int32 status_code = 1;
+    required uint64 timestamp = 2;
+};
+
+message RegisterResponse {
+    required int32 status_code = 1;
+};
+
+service GlobalCacheService {
+    rpc GetEntryFromReadCache(GetEntryRequest) returns (GetEntryResponse);
+    rpc PutEntryFromReadCache(PutEntryRequest) returns (PutEntryResponse);
+    rpc DeleteEntryFromReadCache(DeleteEntryRequest) returns (DeleteEntryResponse);
+
+    rpc GetEntryFromWriteCache(GetEntryRequest) returns (GetEntryResponse);
+    rpc PutEntryFromWriteCache(PutEntryRequest) returns (PutEntryResponse);
+    rpc DeleteEntryFromWriteCache(DeleteEntryRequestForWriteCache) returns (DeleteEntryResponse);
+    rpc QueryTsFromWriteCache(QueryTsRequest) returns (QueryTsResponse);
+
+    rpc Register(RegisterRequest) returns (RegisterResponse);
+};

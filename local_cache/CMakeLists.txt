@@ -1,0 +1,5 @@
+SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
+
+file (GLOB_RECURSE LOCAL_CACHE_SOURCES CONFIGURE_DEPENDS "*.cpp")
+add_library(hybridcache_local STATIC ${LOCAL_CACHE_SOURCES})
+target_link_libraries(hybridcache_local PUBLIC ${THIRD_PARTY_LIBRARIES} -laio)

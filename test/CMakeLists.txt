@@ -1,0 +1,25 @@
+SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
+
+add_executable(test_page_cache test_page_cache.cpp)
+target_link_libraries(test_page_cache PUBLIC hybridcache_local ${THIRD_PARTY_LIBRARIES})
+
+add_executable(test_future test_future.cpp)
+target_link_libraries(test_future PUBLIC ${THIRD_PARTY_LIBRARIES})
+
+add_executable(test_read_cache test_read_cache.cpp)
+target_link_libraries(test_read_cache PUBLIC hybridcache_local ${THIRD_PARTY_LIBRARIES})
+
+add_executable(test_write_cache test_write_cache.cpp)
+target_link_libraries(test_write_cache PUBLIC hybridcache_local ${THIRD_PARTY_LIBRARIES})
+
+add_executable(test_config test_config.cpp)
+target_link_libraries(test_config PUBLIC hybridcache_local ${THIRD_PARTY_LIBRARIES})
+
+add_executable(test_global_read_cache test_global_read_cache.cpp)
+target_link_libraries(test_global_read_cache PUBLIC madfs_global)
+
+add_executable(test_global_read_cache_perf test_global_read_cache_perf.cpp)
+target_link_libraries(test_global_read_cache_perf PUBLIC madfs_global)
+
+add_executable(test_global_write_cache_perf test_global_write_cache_perf.cpp)
+target_link_libraries(test_global_write_cache_perf PUBLIC madfs_global)

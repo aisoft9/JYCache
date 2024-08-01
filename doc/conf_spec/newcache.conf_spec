@@ -1,0 +1,38 @@
+# ReadCache
+ReadCacheConfig.CacheConfig.CacheName                       # 读缓存名称
+ReadCacheConfig.CacheConfig.MaxCacheSize                    # 读缓存内存容量限制
+ReadCacheConfig.CacheConfig.PageBodySize                    # 读缓存page大小
+ReadCacheConfig.CacheConfig.PageMetaSize                    # 读缓存page元数据大小
+ReadCacheConfig.CacheConfig.EnableCAS                       # 读缓存是否启用CAS
+ReadCacheConfig.CacheConfig.CacheLibConfig.EnableNvmCache   # 读缓存是否开启nvm缓存
+ReadCacheConfig.CacheConfig.CacheLibConfig.RaidPath         # nvm缓存文件目录
+ReadCacheConfig.CacheConfig.CacheLibConfig.RaidFileNum      # nvm缓存文件数量限制
+ReadCacheConfig.CacheConfig.CacheLibConfig.RaidFileSize     # nvm单个缓存文件大小限制
+ReadCacheConfig.CacheConfig.CacheLibConfig.DataChecksum     # nvm缓存是否进行数据校验
+ReadCacheConfig.DownloadNormalFlowLimit                     # 读缓存内存未命中从远端下载时的平峰流控
+ReadCacheConfig.DownloadBurstFlowLimit                      # 读缓存内存未命中从远端下载时的顶峰流控
+
+# WriteCache
+WriteCacheConfig.CacheConfig.CacheName      # 写缓存名称
+WriteCacheConfig.CacheConfig.MaxCacheSize   # 写缓存内存容量限制
+WriteCacheConfig.CacheConfig.PageBodySize   # 写缓存page大小
+WriteCacheConfig.CacheConfig.PageMetaSize   # 写缓存page元数据大小
+WriteCacheConfig.CacheConfig.EnableCAS      # 写缓存是否启用CAS
+WriteCacheConfig.CacheSafeRatio             # 写缓存安全容量阈值(百分比), 缓存达到阈值时阻塞待异步flush释放空间
+
+# GlobalCache 
+UseGlobalCache                      # 全局缓存开关
+GlobalCacheConfig.EnableWriteCache  # 全局缓存是否启用写缓存
+GlobalCacheConfig.EtcdAddress       # etcd地址，例如 http://127.0.0.1:2379
+GlobalCacheConfig.GlobalServers     # 全局缓存服务端地址，例如 127.0.0.1:8000
+GlobalCacheConfig.GflagFile         # 全局缓存gflag文件形式输入
+
+ThreadNum=48            # 线程数
+BackFlushCacheRatio     # 写缓存异步flush阈值(百分比)
+UploadNormalFlowLimit   # 上传平峰流控
+UploadBurstFlowLimit    # 上传顶峰流控
+LogPath                 # 日志文件路径
+LogLevel                # 日志级别，INFO=0, WARNING=1, ERROR=2, FATAL=3
+EnableLog               # 是否启用日志打印
+FlushToRead             # 文件flush完成后是否写入读缓存
+CleanCacheByOpen        # 文件open时是否清理读缓存
