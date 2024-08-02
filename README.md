@@ -17,7 +17,7 @@
 
 ## 系统架构
 
-![](https://www.osredm.com/jiuyuan/JYCache/tree/master/doc/image/JYCache_architecture.PNG)
+![](doc/image/JYCache_architecture.PNG)
 在单机对象加速部署模式下，对象存储可通过 FUSE（基于S3FS(V1.94)实现） 或系统调用劫持等方式挂载到本地，用户可像本地磁盘一样进行读写访问。对象存储系统上的一个完整对象对应本地的一个文件，通过对象名构造目录树结构。热点数据可缓存于本地的 DRAM/SSD，通过减少与对象存储系统的数据交互操作，可提升文件系统性能。
 
 在分布式对象加速模式下，热点数据呈现两级缓存结构，除各个客户端内部 DRAM/SSD 缓存外，还提供一层共享的 DRAM/SSD 缓存，进一步提高缓存命中率，提升并发读等场景下的 IO 性能。
