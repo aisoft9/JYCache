@@ -117,7 +117,6 @@ int PageCacheImpl::Init() {
 
         nvmConfig.navyConfig.blockCache()
             .setDataChecksum(cfg_.CacheLibCfg.DataChecksum);
-        nvmConfig.navyConfig.setReaderAndWriterThreads(1, 1, 0, 0);
 
         config.enableNvmCache(nvmConfig).validate();
     }

@@ -4,7 +4,7 @@ find_library(ICEORYX_POSH_LIB iceoryx_posh PATHS ../thirdparties/iceoryx/lib)
 find_library(ICEORYX_HOOFS_LIB iceoryx_hoofs PATHS ../thirdparties/iceoryx/lib)
 find_library(ICEORYX_PLATFORM_LIB iceoryx_platform PATHS ../thirdparties/iceoryx/lib)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../thirdparties/spdlog/include)
@@ -18,7 +18,7 @@ add_subdirectory(middleware)
 add_subdirectory(posix)
 
 add_executable(intercept_server server.cpp)
-target_link_libraries(intercept_server  PUBLIC intercept_discovery intercept_internal  common_lib intercept_filesystem intercept_middleware intercept_registry hybridcache_local madfs_global s3fs_lib ${THIRD_PARTY_LIBRARIES} ${ICEORYX_POSH_LIB} ${ICEORYX_HOOFS_LIB} ${ICEORYX_PLATFORM_LIB} -pthread -lcurl -lxml2 -lcrypto -ldl -laio -lrt -lacl)
+target_link_libraries(intercept_server PUBLIC intercept_discovery intercept_internal common_lib intercept_filesystem intercept_middleware intercept_registry hybridcache_local madfs_global s3fs_lib ${ICEORYX_POSH_LIB} ${ICEORYX_HOOFS_LIB} ${ICEORYX_PLATFORM_LIB} -pthread -lcurl -lxml2 -lcrypto -ldl -laio -lrt)
 
 add_library(intercept_client SHARED client.cpp)
 target_link_libraries(intercept_client PUBLIC
@@ -31,4 +31,4 @@ target_link_libraries(intercept_client PUBLIC
     -lrt
     -L${CMAKE_CURRENT_SOURCE_DIR}/../thirdparties/intercept/lib
 )
-target_compile_options(intercept_client PUBLIC -DCLIENT_BUILD -mavx2)
+target_compile_options(intercept_client PUBLIC -DCLIENT_BUILD)

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
+#include <assert.h>
 
 #include "S3DataAdaptor.h"
 #include "FileSystemDataAdaptor.h"
@@ -50,7 +51,7 @@ TEST(global_cache_client, perf)
             for (int j = 0; j < FLAGS_depth; ++j) {
                 int ret = posix_memalign((void **) &buffer[j].data, 4096, chunk_size);
                 // memset(buffer[j].data, 'x', chunk_size);
-                ASSERT(!ret);
+                assert(!ret);
                 buffer[j].len = chunk_size;
             }
             uint64_t operations = 0;

@@ -3,7 +3,7 @@
 #include <sched.h>
 #include <cstring>
 #include <iostream>
-#include <immintrin.h>  
+// #include <immintrin.h>
 
 #include "posix_op_req_res.h"
 
