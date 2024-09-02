@@ -3,7 +3,7 @@
 [中文说明](README.zh.md)
 
 **JYCache** is a distributed caching storage system, designed for both personal use and large-scale data processing and analysis (e.g. LLM training and inference). **JYCache** supports various storage types, including object storage and parallel file systems.It offers high performance and better scalability. 
-**JYCache** has integrated multiple optimizations from hierarchical caching, context-switch free access layer, and asynchronous I/O. 
+**JYCache** has integrated optimizations such as hierarchical caching, context-switch free access layer, and asynchronous I/O. 
 
 JYCache supports operation on X86 and ARM architectures.
 It also outperforms Alluxio in I/O performance (see below). 
@@ -13,7 +13,7 @@ JYCache provides the following two running modes:
 
 - **Standalone Acceleration**: Mount S3 object storage locally via POSIX interface, enabling read and write access like a local disk. A raw object on S3 maps to a "file" locally, structured into a directory tree based on the object name. Furthermore, hot data can be cached in local DRAM/SSD, improving file system performance by reducing interaction with S3.
 
-- **Distributed Object Acceleration**: It also mounts S3 object storage locally through a POSIX interface for read and write access. However, hot data presents a two-level cache structure; in addition to client-side internal DRAM/SSD caches, a shared DRAM/SSD cache is provided, further increasing cache hit rates and enhancing I/O performance under concurrent read scenarios.
+- **Distributed Object Acceleration**: Hot data presents a two-level cache structure; in addition to client-side internal DRAM/SSD caches, a shared DRAM/SSD cache is provided, further increasing cache hit rates and enhancing I/O performance under concurrent read scenarios.
 
 ## Key Features
 - **POSIX Interface Compatibility**: Applications can immediately achieve caching storage acceleration without recompilation using FUSE or dynamic library interception techniques.
@@ -21,7 +21,7 @@ JYCache provides the following two running modes:
 - **User-Space Zero-Copy I/O Support**: The syscall intercept technique enables full user-space I/O, reducing context switching and copying, thus achieving extreme performance.
 - **Hierarchical Cache Storage**: Local caches are co-located with computation tasks, using high-speed shared caches to provide user processes with up to 45GB/s of cache bandwidth. To further enhance caching efficiency in distributed systems, a global caching service can be deployed to associate with multiple local caches, boosting cache hit rates.
 - **Easy to Scale and Integrate**: Local and global caches use a modular design, allowing for diverse combinations based on business needs.
-- **Multi-Platform Compatibility**: Supports operation on X86 (Intel, AMD, Haiguang, etc.) and ARM (Kunpeng, Feiteng, etc.) platforms.
+- **Multi-Platform Compatibility**: Supports operation on X86 (Intel, AMD, Hygon, etc.) and ARM (Kunpeng, Feiteng, etc.) platforms.
 
 ## Architecture
 
