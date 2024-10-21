@@ -22,6 +22,10 @@ int WriteCache::Put(const std::string &key, size_t start, size_t len,
     while (remainLen > 0) {
         writeLen = pagePos + remainLen > pageSize ? pageSize - pagePos : remainLen;
         std::string pageKey = std::move(GetPageKey(key, index));
+        //----------tqy--------
+        if(cfg_.EnableThrottle)
+            this->throttling.Put_Consume(key, writeLen);
+        //---------------------
         res = pageCache_->Write(pageKey, pagePos, writeLen,
                                 (buffer.data + writeOffset));
         if (SUCCESS != res) break;
@@ -148,7 +152,10 @@ int WriteCache::Delete(const std::string &key, LockType type) {
     if (LockType::ALREADY_LOCKED != type) {
         Lock(key);
     }
-
+    //-----tqy------
+    if(cfg_.EnableThrottle)
+        throttling.Del_File(key);
+    //--------------
     keys_.erase(key);
     size_t delPageNum = 0;
     std::string firstPage = std::move(GetPageKey(key, 0));
@@ -242,6 +249,9 @@ int WriteCache::GetAllKeys(std::map<std::string, time_t>& keys) {
 
     for (auto& it : keys_) {
         keys[it.first] = it.second;
+        //---------tqy-------
+        if(cfg_.EnableThrottle)
+            throttling.Del_File(it.first);
     }
     if (EnableLogging) {
         double totalTime = std::chrono::duration<double, std::milli>(
@@ -255,6 +265,16 @@ int WriteCache::GetAllKeys(std::map<std::string, time_t>& keys) {
 void WriteCache::Close() {
     pageCache_->Close();
     keys_.clear();
+    //------------------tqy------------
+    if(cfg_.EnableThrottle)
+    {
+        throttling.Close();
+        throttling_thread_running_.store(false, std::memory_order_release);//线程终止
+        if (throttling_thread_.joinable()) {
+            throttling_thread_.join();
+        }
+    }
+    
     LOG(WARNING) << "[WriteCache]Close";
 }
 
@@ -269,6 +289,7 @@ size_t WriteCache::GetCacheMaxSize() {
 int WriteCache::Init() {
     pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg);
     int res = pageCache_->Init();
+    
     LOG(WARNING) << "[WriteCache]Init, res:" << res;
     return res;
 }
@@ -279,8 +300,47 @@ void WriteCache::Lock(const std::string &key) {
 
 std::string WriteCache::GetPageKey(const std::string &key, size_t pageIndex) {
     std::string pageKey(key);
-    pageKey.append(std::string(1, PAGE_SEPARATOR)).append(std::to_string(pageIndex));
+    // pageKey.append(std::string(1, PAGE_SEPARATOR)).append(std::to_string(pageIndex));
+    pageKey.append(std::string(1, PAGE_SEPARATOR)).append("Write").append(std::to_string(pageIndex));// tqy add for cachelib combination
     return pageKey;
 }
+
+//---------------------tqy----------------------
+
+int WriteCache::CombinedInit (PoolId curr_id_, std::shared_ptr<Cache> curr_cache_)
+{
+    this->pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg, curr_id_, curr_cache_);
+    LOG(WARNING) << "[WriteCache]Init, curr_id : "<< static_cast<int>(curr_id_) <<" curr_cache : "<< curr_cache_;
+    return SUCCESS;
+}
+
+//开一个线程负责记录文件的流量，并且后续与调度器进行交互
+void WriteCache::Dealing_throttling()
+{
+    if(!cfg_.EnableThrottle)
+    {
+        return;
+    }
+    LOG(WARNING) << "[WriteCache] Throttling Thread start";
+    //memory_order_release确保在此操作之前的所有写操作在其他线程中可见。
+    throttling_thread_running_.store(true, std::memory_order_release);
+    while(throttling_thread_running_.load(std::memory_order_acquire))
+    {
+        //接收到调度器传来的新的带宽
+        //memory_order_acquire确保此操作之后的所有读写操作在其他线程中可见。
+        std::string new_limit = throttling.Cal_New4Test();
+        //new_bw = 0;
+        throttling.SetNewLimits(new_limit);
+        throttling.CleanBlockTime();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));//每0.1s Resize一次
+        // for(auto temp : throttling.job_bandwidth_)
+        // {
+        //     new_bw +=   temp.second;
+        // }
+        // curr_bw = std::max(new_bw, 649651540.0);
+    }
+    LOG(WARNING) << "[WriteCache] Throttling Thread end";
+}
+
 
 }  // namespace HybridCache

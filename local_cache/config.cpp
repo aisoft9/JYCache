@@ -66,6 +66,8 @@ bool GetHybridCacheConfig(const std::string& file, HybridCacheConfig& cfg) {
                              cfg.WriteCacheCfg.CacheCfg.EnableCAS);
     conf.GetValueFatalIfFail("WriteCacheConfig.CacheSafeRatio",
                              cfg.WriteCacheCfg.CacheSafeRatio);
+    conf.GetValueFatalIfFail("WriteCacheConfig.EnableThrottle",
+                             cfg.WriteCacheCfg.EnableThrottle);
 
     // GlobalCache
     conf.GetValueFatalIfFail("UseGlobalCache", cfg.UseGlobalCache);
@@ -91,6 +93,10 @@ bool GetHybridCacheConfig(const std::string& file, HybridCacheConfig& cfg) {
     conf.GetValueFatalIfFail("EnableLog", cfg.EnableLog);
     conf.GetValueFatalIfFail("FlushToRead", cfg.FlushToRead);
     conf.GetValueFatalIfFail("CleanCacheByOpen", cfg.CleanCacheByOpen);
+    //add by tqy
+    conf.GetValueFatalIfFail("EnableResize",cfg.EnableResize);
+    conf.GetValueFatalIfFail("EnableLinUCB",cfg.EnableLinUCB);
+    
 
     conf.PrintConfig();
     return CheckConfig(cfg);

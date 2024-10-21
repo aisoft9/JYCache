@@ -19,6 +19,7 @@ WriteCacheConfig.CacheConfig.PageBodySize   # 写缓存page大小
 WriteCacheConfig.CacheConfig.PageMetaSize   # 写缓存page元数据大小
 WriteCacheConfig.CacheConfig.EnableCAS      # 写缓存是否启用CAS
 WriteCacheConfig.CacheSafeRatio             # 写缓存安全容量阈值(百分比), 缓存达到阈值时阻塞待异步flush释放空间
+WriteCacheConfig.EnableThrottle             # 本地写缓存是否开启限流策略，1为开启，0为关闭
 
 # GlobalCache 
 UseGlobalCache                      # 全局缓存开关
@@ -36,3 +37,5 @@ LogLevel                # 日志级别，INFO=0, WARNING=1, ERROR=2, FATAL=3
 EnableLog               # 是否启用日志打印
 FlushToRead             # 文件flush完成后是否写入读缓存
 CleanCacheByOpen        # 文件open时是否清理读缓存
+EnableResize            # 是否将WriteCache和ReadCache放在一个Cachelib下，单独开启时与原框架几乎没有差异
+EnableLinUCB            # 是否开启LinUCB进行调整，可单独开启

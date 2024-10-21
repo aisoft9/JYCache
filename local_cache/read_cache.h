@@ -17,7 +17,9 @@ class ReadCache {
  public:
     ReadCache(const ReadCacheConfig& cfg,
               std::shared_ptr<DataAdaptor> dataAdaptor,
-              std::shared_ptr<ThreadPool> executor);
+              std::shared_ptr<ThreadPool> executor,   //below added by tqy
+              PoolId curr_id_ = NULL, 
+              std::shared_ptr<Cache> curr_cache_ = nullptr);
     ReadCache() = default;
     ~ReadCache() { Close(); }
 
@@ -41,6 +43,9 @@ class ReadCache {
 
  private:
     int Init();
+    //added by tqy
+    int CombinedInit(PoolId curr_id_, std::shared_ptr<Cache> curr_cache_);
+    //added end
 
     std::string GetPageKey(const std::string &key, size_t pageIndex);
 

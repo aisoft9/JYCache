@@ -48,14 +48,111 @@ void HybridCacheAccessor4S3fs::Init() {
 
     executor_ = std::make_shared<HybridCache::ThreadPool>(cfg_.ThreadNum);
     dataAdaptor_->SetExecutor(executor_);
-    writeCache_ = std::make_shared<WriteCache>(cfg_.WriteCacheCfg);
-    readCache_ = std::make_shared<ReadCache>(cfg_.ReadCacheCfg, dataAdaptor_,
-                                             executor_);
+    // ---deleted by tqy
+    // writeCache_ = std::make_shared<WriteCache>(cfg_.WriteCacheCfg);
+    // readCache_ = std::make_shared<ReadCache>(cfg_.ReadCacheCfg, dataAdaptor_,
+    //                                          executor_);
+    InitCache();
     tokenBucket_ = std::make_shared<folly::TokenBucket>(
             cfg_.UploadNormalFlowLimit, cfg_.UploadBurstFlowLimit);
     toStop_.store(false, std::memory_order_release);
     bgFlushThread_ = std::thread(&HybridCacheAccessor4S3fs::BackGroundFlush, this);
+    //added by tqy referring to xyq
+    if(cfg_.EnableLinUCB)
+    {
+        stopLinUCBThread = false;
+        LinUCBThread = std::thread(&HybridCacheAccessor4S3fs::LinUCBClient, this);
+    }
     LOG(WARNING) << "[Accessor]Init, useGlobalCache:" << cfg_.UseGlobalCache;
+}
+
+
+//added by tqy referring to xyq
+
+int HybridCacheAccessor4S3fs::InitCache()
+{
+    // LOG(WARNING) << "ENABLERESIZE : " << cfg_.EnableResize;
+    
+    if(cfg_.EnableResize || cfg_.EnableLinUCB)   //放进同一个cachelib
+    {
+        //in page implement
+        const uint64_t REDUNDANT_SIZE = 1024 * 1024 * 1024;
+        const unsigned bucketsPower = 25;
+        const unsigned locksPower = 15;
+        const std::string COM_CACHE_NAME = "ComCache";//WriteCache和ReadCache都变为其中一部分 
+        const std::string WRITE_POOL_NAME = "WritePool";
+        const std::string READ_POOL_NAME = "ReadPool";
+
+        //Resize Total Cache
+        Cache::Config config;
+        //TOFIXUP：REDUNDANT_SIZE需要*2吗？
+        config
+            .setCacheSize(cfg_.WriteCacheCfg.CacheCfg.MaxCacheSize + cfg_.ReadCacheCfg.CacheCfg.MaxCacheSize + 2 * REDUNDANT_SIZE)
+            .setCacheName(COM_CACHE_NAME)
+            .setAccessConfig({bucketsPower, locksPower})
+            .validate();
+        std::shared_ptr<Cache> comCache_ = std::make_unique<Cache>(config);
+        ResizeWriteCache_ = comCache_;
+
+        if (comCache_->getPoolId(WRITE_POOL_NAME) != -1) 
+        {
+            LOG(WARNING) << "Pool with the same name "<<WRITE_POOL_NAME<<" already exists.";
+            writePoolId_ = comCache_->getPoolId(WRITE_POOL_NAME);
+        }
+        else
+        {
+            writePoolId_ = comCache_->addPool(WRITE_POOL_NAME, cfg_.WriteCacheCfg.CacheCfg.MaxCacheSize);
+        }
+        writeCache_ = std::make_shared<WriteCache>(cfg_.WriteCacheCfg, writePoolId_, comCache_);
+        
+
+        //实际上只有ReadCache可能需要NVM
+        if(cfg_.ReadCacheCfg.CacheCfg.CacheLibCfg.EnableNvmCache)
+        {
+            Cache::NvmCacheConfig nvmConfig;
+            std::vector<std::string> raidPaths;
+            //Read Path
+            for (int i=0; i<cfg_.ReadCacheCfg.CacheCfg.CacheLibCfg.RaidFileNum; ++i) 
+            {
+                raidPaths.push_back(cfg_.ReadCacheCfg.CacheCfg.CacheLibCfg.RaidPath + std::to_string(i));
+            }
+            nvmConfig.navyConfig.setRaidFiles(raidPaths,
+                cfg_.ReadCacheCfg.CacheCfg.CacheLibCfg.RaidFileSize, false);
+            nvmConfig.navyConfig.blockCache()
+                .setDataChecksum(cfg_.ReadCacheCfg.CacheCfg.CacheLibCfg.DataChecksum);
+            nvmConfig.navyConfig.setReaderAndWriterThreads(1, 1, 0, 0);
+            config.enableNvmCache(nvmConfig).validate();
+        }
+        ResizeReadCache_ = comCache_;
+        if (comCache_->getPoolId(READ_POOL_NAME) != -1) 
+        {
+            LOG(WARNING) << "Pool with the same name "<<READ_POOL_NAME<<" already exists.";
+            readPoolId_ = comCache_->getPoolId(READ_POOL_NAME);
+        }
+        else
+        {
+            readPoolId_ = comCache_->addPool(READ_POOL_NAME, cfg_.ReadCacheCfg.CacheCfg.MaxCacheSize);
+        }
+        readCache_ = std::make_shared<ReadCache>(cfg_.ReadCacheCfg, dataAdaptor_,
+                                             executor_, readPoolId_, comCache_);
+        
+        LOG(WARNING) << "[Accessor]Init Cache in Combined Way.";
+    }
+    else    //沿用原来的方式
+    {
+        writeCache_ = std::make_shared<WriteCache>(cfg_.WriteCacheCfg);
+        readCache_ = std::make_shared<ReadCache>(cfg_.ReadCacheCfg, dataAdaptor_,
+                                             executor_);
+        ResizeWriteCache_ = nullptr;
+        ResizeReadCache_ = nullptr;
+        LOG(WARNING) << "[Accessor]Init Cache in Initial Way.";
+    }
+    writeCacheSize_ = cfg_.WriteCacheCfg.CacheCfg.MaxCacheSize;
+    readCacheSize_ = cfg_.ReadCacheCfg.CacheCfg.MaxCacheSize;
+
+    
+    return SUCCESS;
+    
 }
 
 void HybridCacheAccessor4S3fs::Stop() {
@@ -66,6 +163,11 @@ void HybridCacheAccessor4S3fs::Stop() {
     executor_->stop();
     writeCache_.reset();
     readCache_.reset();
+    // added by tqy referring to xyq
+    stopLinUCBThread.store(true, std::memory_order_release);
+    if(cfg_.EnableLinUCB && LinUCBThread.joinable()){
+        LinUCBThread.join();
+    }
     LOG(WARNING) << "[Accessor]Stop";
 }
 
@@ -76,9 +178,22 @@ int HybridCacheAccessor4S3fs::Put(const std::string &key, size_t start,
 
     // When the write cache is full, 
     // block waiting for asynchronous flush to release the write cache space.
-    while(IsWriteCacheFull(len)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // while(IsWriteCacheFull(len)) {
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // }
+    if(cfg_.EnableLinUCB || cfg_.EnableResize)
+    {
+        while(IsWritePoolFull(len)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
+    else
+    {
+        while(IsWriteCacheFull(len)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    ++writeCount_;
 
     // shared lock
     auto fileLock = fileLock_.find(key);
@@ -97,6 +212,7 @@ int HybridCacheAccessor4S3fs::Put(const std::string &key, size_t start,
             break;
     }
 
+    // LOG(WARNING) << "[TestOutPut]Accessor Put, Get File "<<key<<"'s Lock";
     int res = writeCache_->Put(key, start, len, ByteBuffer(const_cast<char *>(buf), len));
 
     int fd = -1;
@@ -112,13 +228,17 @@ int HybridCacheAccessor4S3fs::Put(const std::string &key, size_t start,
 
     fileLock->second->fetch_sub(1);  // release shared lock
 
-    if (EnableLogging) {
-        double totalTime = std::chrono::duration<double, std::milli>(
+    // LOG(WARNING) << "[TestOutPut]Accessor Put, Release File "<<key<<"'s Lock";
+    double totalTime = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - startTime).count();
+    if (EnableLogging) {
         LOG(INFO) << "[Accessor]Put, key:" << key << ", start:" << start
                   << ", len:" << len << ", res:" << res
                   << ", time:" << totalTime << "ms";
     }
+    // added by tqy referring to xyq 
+    writeByteAcc_ += len;
+    writeTimeAcc_ += totalTime;
     return res;
 }
 
@@ -126,6 +246,8 @@ int HybridCacheAccessor4S3fs::Get(const std::string &key, size_t start,
                                   size_t len, char* buf) {
     std::chrono::steady_clock::time_point startTime;
     if (EnableLogging) startTime = std::chrono::steady_clock::now();
+    ++readCount_;
+    // LOG(INFO) << "[TestOutPut] Get start, key:" << key;
 
     int res = SUCCESS;
     ByteBuffer buffer(buf, len);
@@ -171,14 +293,16 @@ int HybridCacheAccessor4S3fs::Get(const std::string &key, size_t start,
                 res = tmpRes;
         }
     }
-
-    if (EnableLogging) {
-        double totalTime = std::chrono::duration<double, std::milli>(
+    double totalTime = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - startTime).count();
+    if (EnableLogging) {
         LOG(INFO) << "[Accessor]Get, key:" << key << ", start:" << start
                   << ", len:" << len << ", res:" << res
                   << ", time:" << totalTime << "ms";
     }
+    // added by tqy referring to xyq 
+    readByteAcc_ += len;
+    readTimeAcc_ += totalTime;
     return res;
 }
 
@@ -188,6 +312,7 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
         startTime = std::chrono::steady_clock::now();
         LOG(INFO) << "[Accessor]Flush start, key:" << key;
     }
+    // LOG(WARNING) << "[TestOutPut] Flush start, key:" << key;
 
     // exclusive lock
     auto fileLock = fileLock_.find(key);
@@ -212,12 +337,16 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
     if (nullptr == (ent = FdManager::get()->GetFdEntity(
                 key.c_str(), fd, false, AutoLock::ALREADY_LOCKED))) {
         res = -EIO;
-        LOG(ERROR) << "[Accessor]Flush, can't find opened path, file:" << key;
+        LOG(ERROR) << "[Accessor]Flush, can't find opened path, file:" << key;//error here
+        // LOG(ERROR) << "[TestOutPut]Accessor Flush, fileLock is "<<fileLock->second->load();
     }
     size_t realSize = 0;
     std::map<std::string, std::string> realHeaders;
     if (SUCCESS == res) {
         realSize = ent->GetRealsize();
+        // file size >= 10G stop LinUCB
+        if(realSize >= 10737418240)
+            stopLinUCBThread.store(true, std::memory_order_release);
         for (auto &it : ent->GetOriginalHeaders()) {
             realHeaders[it.first] = it.second;
         }
@@ -244,7 +373,7 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
     char *buf = nullptr;
     while(0 != posix_memalign((void **) &buf, 4096, realSize));
     ByteBuffer buffer(buf, realSize);
-    if (SUCCESS == res) {
+    if (SUCCESS == res) {//try to get
         const size_t chunkSize = GetGlobalConfig().write_chunk_size * 2;
         const uint64_t chunkNum = realSize / chunkSize + (realSize % chunkSize == 0 ? 0 : 1);
         std::vector<Json::Value> jsonRoots(chunkNum);
@@ -273,6 +402,8 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
         }
     }
 
+    // LOG(WARNING) << "[TestOutPut]Flush, Get File "<<key<<" From WriteCache/ReadCache res : "<< res;
+
     if (SUCCESS == res && !cfg_.UseGlobalCache) {  // Get success
         while(!tokenBucket_->consume(realSize));  // upload flow control
         res = dataAdaptor_->UpLoad(key, realSize, buffer, realHeaders).get();
@@ -285,12 +416,13 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
     // folly via is not executed immediately, so use separate thread
     std::thread t([this, key, res]() {
         if (SUCCESS == res)  // upload success
-            writeCache_->Delete(key);
+            writeCache_->Delete(key);       //delete here
         auto fileLock = fileLock_.find(key);
         if (fileLock_.end() != fileLock) {
             fileLock->second->store(0);
             fileLock_.erase(fileLock);  // release exclusive lock
         }
+        // LOG(WARNING) << "[TestOutPut]Flush, Delete File "<<key<<" From WriteCache success";
     });
     t.detach();
 
@@ -314,11 +446,13 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
             if (buf) free(buf);
         });
     }
-
+    // LOG(WARNING) << "[TestOutPut]Flush, Flush File "<<key<<" To ReadCache success";
     if (EnableLogging) {
         double totalTime = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - startTime).count();
         LOG(INFO) << "[Accessor]Flush end, key:" << key << ", size:" << realSize
+                  << ", res:" << res << ", time:" << totalTime << "ms";
+        LOG(WARNING) << "[Accessor]Flush end, key:" << key << ", size:" << realSize
                   << ", res:" << res << ", time:" << totalTime << "ms";
     }
     return res;
@@ -482,6 +616,7 @@ int HybridCacheAccessor4S3fs::FsSync() {
         if (backFlushRunning_.compare_exchange_weak(expected, true))
             break;
     }
+    // LOG(WARNING) << "[TestOutPut] expected locked";
 
     std::map<std::string, time_t> files;
     writeCache_->GetAllKeys(files);
@@ -490,16 +625,20 @@ int HybridCacheAccessor4S3fs::FsSync() {
             [](std::pair<std::string, time_t> lhs, std::pair<std::string, time_t> rhs) {
         return lhs.second < rhs.second;
     });
+    // LOG(WARNING) << "[TestOutPut] Sorting finished";
 
     std::vector<folly::Future<int>> fs;
     for (auto& file : filesVec) {
         std::string key = file.first;
+        // LOG(WARNING) << "[TestOutPut] FsSync, start flush file:" << key;
         fs.emplace_back(folly::via(executor_.get(), [this, key]() {
             int res = this->Flush(key);
             if (res) {
                 LOG(ERROR) << "[Accessor]FsSync, flush error in FsSync, file:" << key
                            << ", res:" << res;
             }
+            // else
+            //     LOG(WARNING) << "[TestOutPut] FsSync, flush success in FsSync, file:" << key;
             return res;
         }));
     }
@@ -520,19 +659,60 @@ bool HybridCacheAccessor4S3fs::UseGlobalCache() {
     return cfg_.UseGlobalCache;
 }
 
-void HybridCacheAccessor4S3fs::BackGroundFlush() {
+void HybridCacheAccessor4S3fs::BackGroundFlush() 
+{
     LOG(WARNING) << "[Accessor]BackGroundFlush start";
-    while (!toStop_.load(std::memory_order_acquire)) {
-        if (WriteCacheRatio() < cfg_.BackFlushCacheRatio) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
+    // while (!toStop_.load(std::memory_order_acquire)) {
+    //     if (WriteCacheRatio() < cfg_.BackFlushCacheRatio) {
+    //         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    //         continue;
+    //     }
+    //     LOG(WARNING) << "[Accessor]BackGroundFlush radically, write cache ratio:"
+    //                  << WriteCacheRatio();
+    //     FsSync();
+    // }
+    // if (0 < writeCache_->GetCacheSize()) {
+    //     FsSync();
+    // }
+    // LOG(WARNING) << "[Accessor]BackGroundFlush end";
+    if(cfg_.EnableResize || cfg_.EnableResize)
+    {
+        while (!toStop_.load(std::memory_order_acquire)) 
+        {
+            if (WritePoolRatio() < cfg_.BackFlushCacheRatio) 
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            LOG(WARNING) << "[Accessor]BackGroundFlush radically, write pool ratio:"<< WritePoolRatio();
+            // LOG(WARNING) << "[TestOutPut] Before Flush, Write Pool size : " <<writeCache_->GetCacheSize();
+            FsSync();
+            // LOG(WARNING) << "[TestOutPut] After Flush, Write Pool size : "<<writeCache_->GetCacheSize()<<" , Ratio : "<<WritePoolRatio();
         }
-        LOG(WARNING) << "[Accessor]BackGroundFlush radically, write cache ratio:"
-                     << WriteCacheRatio();
-        FsSync();
+        if (0 < writeCache_->GetCacheSize()) 
+        {
+            FsSync();
+        }
     }
-    if (0 < writeCache_->GetCacheSize()) {
-        FsSync();
+    else
+    {
+        while (!toStop_.load(std::memory_order_acquire)) 
+        {
+            if (WriteCacheRatio() < cfg_.BackFlushCacheRatio) 
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            LOG(WARNING) << "[Accessor]BackGroundFlush radically, write cache ratio:"<< WriteCacheRatio();
+            // LOG(WARNING) << "[TestOutPut] Before Flush, Write cache size : "<<writeCache_->GetCacheSize();
+            FsSync();
+            // LOG(WARNING) << "[TestOutPut] After Flush, Write cache size : "<<writeCache_->GetCacheSize()<<" , Ratio : "<<WriteCacheRatio();
+        }
+        if (0 < writeCache_->GetCacheSize()) //仍有文件未存储
+        {
+            // LOG(WARNING) << "[TestOutPut] Final BackGroundFlush ";
+            FsSync();
+        }
     }
     LOG(WARNING) << "[Accessor]BackGroundFlush end";
 }
@@ -544,11 +724,219 @@ void HybridCacheAccessor4S3fs::InitLog() {
     google::InitGoogleLogging("hybridcache");
 }
 
-uint32_t HybridCacheAccessor4S3fs::WriteCacheRatio() {
+
+uint32_t HybridCacheAccessor4S3fs::WriteCacheRatio() 
+{
     return writeCache_->GetCacheSize() * 100 / writeCache_->GetCacheMaxSize();
 }
 
-bool HybridCacheAccessor4S3fs::IsWriteCacheFull(size_t len) {
+//cfg_.EnableResize || cfg_.EnableResize
+uint32_t HybridCacheAccessor4S3fs::WritePoolRatio() 
+{
+    return writeCache_->GetCacheSize() * 100 / writeCacheSize_ ;
+}
+
+bool HybridCacheAccessor4S3fs::IsWriteCacheFull(size_t len) 
+{
     return writeCache_->GetCacheSize() + len >=
             (writeCache_->GetCacheMaxSize() * cfg_.WriteCacheCfg.CacheSafeRatio / 100);
 }
+
+//if(cfg_.EnableResize || cfg_.EnableLinUCB)
+bool HybridCacheAccessor4S3fs::IsWritePoolFull(size_t len) 
+{
+
+    return writeCache_->GetCacheSize() + len >=
+        (writeCacheSize_ * cfg_.WriteCacheCfg.CacheSafeRatio / 100);
+}
+
+
+//--------------------added by tqy referring to xyq-----------
+
+
+void HybridCacheAccessor4S3fs::LinUCBClient()
+{
+    LOG(WARNING) << "[LinUCB] LinUCBThread start";
+    uint32_t resizeInterval_ = 5;//暂定5s
+    while(!stopLinUCBThread)
+    {
+        int client_socket;
+        struct sockaddr_in server_address;
+        //为空则不调节
+        if(writeByteAcc_ == 0 && readByteAcc_ == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+        if ((client_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+        {
+            LOG(WARNING) << "[LinUCB] Socket creation error";
+            break;
+        }
+        memset(&server_address, '0', sizeof(server_address));
+        server_address.sin_family = AF_INET;
+        server_address.sin_port = htons(IP_PORT);
+        if (inet_pton(AF_INET, IP_ADDR, &server_address.sin_addr) <= 0) {
+            LOG(WARNING) << "[LinUCB] Invalid address/ Address not supported";
+            break;
+        }
+        // 连接服务器
+        if (connect(client_socket, (struct sockaddr *)&server_address, sizeof(server_address)) < 0) {
+            LOG(WARNING) << "[LinUCB] Connection Failed";
+            break;
+        }
+
+        LOG(INFO) << "[LinUCB] poolStats begin sent";
+        // 发送每个Pool的Throughput
+        LOG(INFO) << "[LinUCB] writeByteAcc_ : " << writeByteAcc_ << ", writeTimeAcc_ :" << writeTimeAcc_;
+        LOG(INFO) << "[LinUCB] readByteAcc_ : " << readByteAcc_ << ", readTimeAcc_ :" << readTimeAcc_;
+        if(writeTimeAcc_ == 0) writeTimeAcc_ = 1;
+        if(readTimeAcc_ == 0) readTimeAcc_ = 1;
+        // double writeThroughput = (double)writeByteAcc_/(double)writeTimeAcc_/1024/1024;
+        // double readThroughput = (double)readByteAcc_/(double)readTimeAcc_/ 1024/1024;
+        double writeThroughput = (double)writeByteAcc_/(double)writeTimeAcc_/1024 / 1024 ;// 20643184640
+        double readThroughput = (double)readByteAcc_/(double)readTimeAcc_/ 1024 / 1024;
+        writeThroughput = std::tanh(writeThroughput);
+        readThroughput = std::tanh(readThroughput);
+        LOG(INFO) << "[LinUCB] writeThroughput : " << writeThroughput 
+                    << " readThroughput : " << readThroughput;
+
+        // 清空
+        writeByteAcc_ = 0;
+        writeTimeAcc_ = 0;
+        readByteAcc_ = 0;
+        readTimeAcc_ = 0;
+
+        // 发送poolStats数据
+        std::ostringstream oss; 
+        oss << "WritePool" << ":" << writeCacheSize_/fixSize << ";"  // 当前配置
+            << "ReadPool" << ":" << readCacheSize_/fixSize << ";"
+            << "WritePool" << ":" << writeThroughput << ";" // 吞吐量
+            << "ReadPool" << ":" << readThroughput << ";"
+            << "WritePool" << ":" << writeCount_ << ";" // context
+            << "ReadPool" << ":" << readCount_ << ";";
+        writeCount_ = 0;
+        readCount_ = 0;
+        std::string poolStats = oss.str();
+        LOG(INFO) << "[LinUCB] " << oss.str(); // log
+        if(send(client_socket, poolStats.c_str(), poolStats.size(), 0) < 0){
+            LOG(INFO) << "[LinUCB] Error sending data.";
+            break;
+        }
+        LOG(INFO) << "[LinUCB] poolStats message sent successfully";
+
+        // 接收new pool size数据
+        char newSize[1024] = {0};
+        auto readLen = read(client_socket, newSize, 1024);
+        std::string serialized_data(newSize);
+        LOG(INFO) << "[LinUCB] Received data: " << serialized_data << std::endl; // log
+        std::istringstream iss(serialized_data);
+        // 解析poolName
+        std::vector<std::string> workloads;
+        std::string line;
+        std::getline(iss, line); // 读取第一行
+        std::istringstream lineStream(line);
+        std::string poolName;
+        while (lineStream >> poolName) {
+            workloads.push_back(poolName);
+        }
+
+        // 解析cache_size
+        std::vector<int64_t> cache_sizes;
+        std::getline(iss, line); // 读取第二行
+        std::istringstream cacheSizeStream(line);
+        int64_t cacheSize;
+        while (cacheSizeStream >> cacheSize) {
+            cache_sizes.push_back(cacheSize);
+        }
+
+        // for(int i = 0; i < workloads.size(); ++i){
+        //     LOG(INFO) << "[LinUCB] " << workloads[i] << ":" << cache_sizes[i];
+        // }
+        // LOG(WARNING) << "[LinUCB] newConfig end recv"; 
+        close(client_socket);
+        LOG(INFO) << "[LinUCB] Before Resize, Write Pool Size is "<<writeCacheSize_
+                    <<" , Read Pool Size is "<<readCacheSize_;
+
+        // 调整 pool size
+        int64_t deltaWrite = (int64_t)cache_sizes[0]*fixSize - ResizeWriteCache_->getPoolStats(writePoolId_).poolSize;
+        int64_t deltaRead = (int64_t)cache_sizes[1]*fixSize - ResizeReadCache_->getPoolStats(readPoolId_).poolSize;
+       
+        bool writeRes = false;
+        bool readRes = false;
+        int64_t shrinkSize = 0;
+        
+        //先shrink后grow
+        if (deltaWrite < 0) {
+            //如果writecache要缩小超过可分配容量的部分，应当先发起FsSync
+            // LOG(WARNING) << "[LinUCB]Request FsSync first";
+            // FsSync();
+            
+            int64_t freeSize = ResizeWriteCache_->getPoolStats(writePoolId_).poolSize - writeCache_->GetCacheSize();
+            LOG(INFO) << "[LinUCB] WritePool Free Size : " << freeSize;
+            if(freeSize - reserveSize < -deltaWrite){
+                deltaWrite = -(freeSize - reserveSize)/fixSize * fixSize ;
+            }
+            LOG(INFO) << "[LinUCB] WriteCache shrinkPool size:" << deltaWrite;
+            writeRes = ResizeWriteCache_->shrinkPool(writePoolId_, -deltaWrite);
+            if(writeRes){
+                LOG(INFO) << "[LinUCB] WriteCache shrinkPool succ";
+                shrinkSize = shrinkSize +(-deltaWrite);
+            }
+            else
+            {
+                LOG(ERROR) << "[LinUCB] WriteCache shrinkPool failed";
+            }
+        }
+        if (deltaRead < 0) {
+            if(ResizeReadCache_->getPoolStats(readPoolId_).poolSize - 2*reserveSize < -deltaRead)
+            {
+                deltaRead = -(ResizeReadCache_->getPoolStats(readPoolId_).poolSize - 2*reserveSize)/fixSize*fixSize;
+            }
+            LOG(INFO) << "[LinUCB] ReadCache shrinkPool size:" << deltaRead;
+            readRes = ResizeReadCache_->shrinkPool(readPoolId_, -deltaRead);
+            if(readRes){
+                LOG(INFO) << "[LinUCB] ReadCache shrinkPool succ";
+                shrinkSize = shrinkSize + (-deltaRead);
+            }
+            else
+            {
+                LOG(ERROR) << "[LinUCB] ReadCache shrinkPool failed";
+            }
+        }
+        //grow
+        if (deltaWrite > 0) 
+        {
+            if(deltaWrite > shrinkSize){
+                deltaWrite = shrinkSize;
+            }
+            LOG(INFO) << "[LinUCB] WriteCache growPool size:" << deltaWrite;
+            writeRes = ResizeWriteCache_->growPool(writePoolId_, deltaWrite);
+            if(writeRes){
+                shrinkSize = shrinkSize - deltaWrite;
+            }
+        }
+
+        if (deltaRead > 0) {
+            if(deltaRead > shrinkSize){
+                deltaRead = shrinkSize;
+            }
+            LOG(INFO) << "[LinUCB] ReadCache growPool size:" << deltaRead;
+            readRes = ResizeReadCache_->growPool(readPoolId_, deltaRead);
+            if(readRes){
+                shrinkSize = shrinkSize - deltaRead;
+            }
+        }
+
+        writeCacheSize_ = ResizeWriteCache_->getPoolStats(writePoolId_).poolSize;
+        readCacheSize_ = ResizeReadCache_->getPoolStats(readPoolId_).poolSize;
+        LOG(INFO) << "[LinUCB] After Resize, Write Pool Size is "<<writeCacheSize_
+                    <<" , Read Pool Size is "<<readCacheSize_;
+        
+        // 每隔 resizeInterval_ 秒调整一次 
+        std::this_thread::sleep_for(std::chrono::seconds(resizeInterval_));
+        // LOG(INFO) << "[LinUCB] " << butil::cpuwide_time_us();
+    }
+    LOG(WARNING) << "[LinUCB] LinUCBThread stop";
+}
+
