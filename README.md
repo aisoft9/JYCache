@@ -1,5 +1,4 @@
 # JYCache, powered by 9#AISoft
-# test1
 
 [中文说明](README.zh.md)
 
