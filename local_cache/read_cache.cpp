@@ -5,9 +5,19 @@ namespace HybridCache {
 
 ReadCache::ReadCache(const ReadCacheConfig& cfg,
         std::shared_ptr<DataAdaptor> dataAdaptor,
-        std::shared_ptr<ThreadPool> executor) :
+        std::shared_ptr<ThreadPool> executor,   //below added
+        PoolId curr_id_, 
+        std::shared_ptr<Cache> curr_cache_) :
             cfg_(cfg), dataAdaptor_(dataAdaptor), executor_(executor) {
-    Init();
+    // Init();
+    if(curr_cache_ == nullptr)
+    {
+        Init();
+    }
+    else
+    {
+        CombinedInit(curr_id_, curr_cache_);
+    }
 }
 
 folly::Future<int> ReadCache::Get(const std::string &key, size_t start,
@@ -60,7 +70,8 @@ folly::Future<int> ReadCache::Get(const std::string &key, size_t start,
     size_t fileStartOff = 0;
     std::vector<folly::Future<int>> fs;
     auto it = dataBoundary.begin();
-    while (remainLen > 0 && SUCCESS == res) {
+    while (remainLen > 0 && SUCCESS == res) 
+    {
         ByteBuffer stepBuffer(buffer.data + stepStart);
         fileStartOff = start + stepStart;
         if (it != dataBoundary.end()) {
@@ -83,7 +94,6 @@ folly::Future<int> ReadCache::Get(const std::string &key, size_t start,
             while(!this->tokenBucket_->consume(readLen));
             return SUCCESS;
         }).thenValue([this, key, fileStartOff, readLen, stepBuffer](int i) {
-            // LOG(INFO) << "Extra download: " << key << " " << readLen; 
             ByteBuffer tmpBuffer(stepBuffer.data, readLen);
             return this->dataAdaptor_->DownLoad(key, fileStartOff, readLen, tmpBuffer).get();
         }).thenValue([this, key, fileStartOff, readLen, stepBuffer](int downRes) {
@@ -248,9 +258,23 @@ int ReadCache::Init() {
     return res;
 }
 
+//added by tqy
+
+int ReadCache::CombinedInit(PoolId curr_id_, std::shared_ptr<Cache> curr_cache_)
+{
+    pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg, curr_id_, curr_cache_);
+    tokenBucket_ = std::make_shared<folly::TokenBucket>(
+            cfg_.DownloadNormalFlowLimit, cfg_.DownloadBurstFlowLimit);
+    LOG(WARNING) << "[ReadCache]Init, curr_id : "<<  static_cast<int>(curr_id_) <<" curr_cache : "<< curr_cache_;
+    return SUCCESS;
+}
+
+//add end
+
 std::string ReadCache::GetPageKey(const std::string &key, size_t pageIndex) {
     std::string pageKey(key);
-    pageKey.append(std::string(1, PAGE_SEPARATOR)).append(std::to_string(pageIndex));
+    // pageKey.append(std::string(1, PAGE_SEPARATOR)).append(std::to_string(pageIndex));
+    pageKey.append(std::string(1, PAGE_SEPARATOR)).append("Read").append(std::to_string(pageIndex));
     return pageKey;
 }
 

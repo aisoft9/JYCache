@@ -96,7 +96,18 @@ class PageCacheImpl : public PageCache {
  public:
     PageCacheImpl(const CacheConfig& cfg): PageCache(cfg) {
         bitmapSize_ = cfg_.PageBodySize / BYTE_LEN;
+        LOG(WARNING) << "[TestOutPut] PageCache Init with size : "<<GetCacheSize();
     }
+    //added by tqy
+    PageCacheImpl(const CacheConfig& cfg, PoolId curr_pool_id_, std::shared_ptr<Cache> curr_cache_):PageCache(cfg)
+    {
+        bitmapSize_ = cfg_.PageBodySize / BYTE_LEN;
+        cache_ = curr_cache_;
+        pool_ = curr_pool_id_;
+    }
+    
+
+    //added end
     ~PageCacheImpl() {}
 
     int Init();
@@ -148,6 +159,7 @@ class PageCacheImpl : public PageCache {
     }
 
     Cache::WriteHandle FindOrCreateWriteHandle(const std::string &key);
+    
 
  private:
     std::shared_ptr<Cache> cache_;

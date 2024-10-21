@@ -407,7 +407,8 @@ int PageCacheImpl::Delete(const std::string &key) {
     return res;
 }
 
-Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key) {
+Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key) 
+{
     auto writeHandle = cache_->findToWrite(key);
     if (!writeHandle) {
         writeHandle = cache_->allocate(pool_, key, GetRealPageSize());
@@ -424,7 +425,7 @@ Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key
                 pageNum_.fetch_add(1);
                 pagesList_.insert(key);
             }
-        } else {
+        } else {//WriteCache
             if (cache_->insert(writeHandle)) {
                 pageNum_.fetch_add(1);
                 pagesList_.insert(key);
