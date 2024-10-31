@@ -1,0 +1,98 @@
+#
+#  Copyright (c) 2020 # Inc.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+workspace(name = "jycache")
+
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository", "new_git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+
+# C++ rules for Bazel.
+http_archive(
+    name = "rules_cc",
+    urls = ["https://ghproxy.cn/https://github.com/bazelbuild/rules_cc/archive/9e10b8a6db775b1ecd358d8ddd3dab379a2c29a5.zip"],
+    strip_prefix = "rules_cc-9e10b8a6db775b1ecd358d8ddd3dab379a2c29a5",
+    sha256 = "954b7a3efc8752da957ae193a13b9133da227bdacf5ceb111f2e11264f7e8c95",
+)
+
+http_archive(
+  name = "com_google_absl",
+  urls = ["https://ghproxy.cn/https://github.com/abseil/abseil-cpp/archive/refs/tags/20210324.2.tar.gz"],
+  strip_prefix = "abseil-cpp-20210324.2",
+  sha256 = "59b862f50e710277f8ede96f083a5bb8d7c9595376146838b9580be90374ee1f",
+)
+
+# fmt
+http_archive(
+  name = "fmt",
+  url = "https://ghproxy.cn/https://github.com/fmtlib/fmt/archive/9.1.0.tar.gz",
+  sha256 = "5dea48d1fcddc3ec571ce2058e13910a0d4a6bab4cc09a809d8b1dd1c88ae6f2",
+  strip_prefix = "fmt-9.1.0",
+  build_file = "//:thirdparties/fmt.BUILD",
+)
+
+# spdlog
+http_archive(
+  name = "spdlog",
+  urls = ["https://ghproxy.cn/https://github.com/gabime/spdlog/archive/refs/tags/v1.11.0.tar.gz"],
+  strip_prefix = "spdlog-1.11.0",
+  sha256 = "ca5cae8d6cac15dae0ec63b21d6ad3530070650f68076f3a4a862ca293a858bb",
+  build_file = "//:thirdparties/spdlog.BUILD",
+)
+
+
+# config
+new_local_repository(
+    name = "config",
+    build_file = "//:thirdparties/config.BUILD",
+    path = "thirdparties/config",
+)
+
+new_local_repository(
+    name = "client",
+    build_file = "//:hadoop_sdk/libjycachefs/client.BUILD",
+    path = "client/",
+)
+
+# Bazel platform rules.
+http_archive(
+    name = "platforms",
+    sha256 = "b601beaf841244de5c5a50d2b2eddd34839788000fa1be4260ce6603ca0d8eb7",
+    strip_prefix = "platforms-98939346da932eef0b54cf808622f5bb0928f00b",
+    urls = ["https://ghproxy.cn/https://github.com/bazelbuild/platforms/archive/98939346da932eef0b54cf808622f5bb0928f00b.zip"],
+)
+
+new_local_repository(
+    name = "jni",
+    build_file = "//:thirdparties/jni.BUILD",
+    path = "thirdparties",
+)
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+http_archive(
+    name = "hedron_compile_commands",
+
+    # Replace the commit hash in both places (below) with the latest, rather than using the stale one here.
+    # Even better, set up Renovate and let it do the work for you (see "Suggestion: Updates" in the README).
+    urls = [
+        "https://ghproxy.cn/https://github.com/hedronvision/bazel-compile-commands-extractor/archive/3dddf205a1f5cde20faf2444c1757abe0564ff4c.tar.gz",
+    ],
+    strip_prefix = "bazel-compile-commands-extractor-3dddf205a1f5cde20faf2444c1757abe0564ff4c",
+    sha256 = "3cd0e49f0f4a6d406c1d74b53b7616f5e24f5fd319eafc1bf8eee6e14124d115",
+)
+load("@hedron_compile_commands//:workspace_setup.bzl", "hedron_compile_commands_setup")
+hedron_compile_commands_setup()

@@ -1,0 +1,92 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# clion
+.idea
+cmake-build-debug
+CMakeLists.txt
+bin
+*.temp
+.clwb
+*.swp
+
+# cscope
+cscope.out
+cscope.in.out
+cscope.po.out
+cscope.files
+tags
+
+.sconsign.dblite
+build.err
+build.log
+
+# python
+*.pyc
+
+
+# protobuf
+*.pb.h
+*.pb.cc
+
+# bazel
+bazel-*
+bazel-bin
+hadoop_posix
+bazel-genfiles
+bazel-out
+bazel-testlogs
+
+# vscode
+.vscode
+
+# vimprj
+.vimprj/
+
+#log
+*.log
+runlog/
+
+# history
+.gdb_history
+
+build
+
+*.class
+hadoop_sdk/java/target/
+hadoop_sdk/java/native/build
+hadoop_sdk/libjycachefs/examples/bin
+hadoop_sdk/java/dependency-reduced-pom.xml
+hadoop_sdk/output/
+hadoop-test/
+nnbench-test/
+META-INF/
+com/
+
