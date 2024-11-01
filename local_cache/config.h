@@ -25,6 +25,7 @@ struct CacheConfig {
     uint32_t        PageBodySize;
     uint32_t        PageMetaSize;
     bool            EnableCAS;
+    bool            SafeMode;  // atomic write/delete lock
     CacheLibConfig  CacheLibCfg;
 };
 
@@ -34,11 +35,10 @@ struct ReadCacheConfig {
     uint64_t        DownloadBurstFlowLimit;
 };
 
-struct WriteCacheConfig {  
+struct WriteCacheConfig {
     CacheConfig     CacheCfg;
     uint32_t        CacheSafeRatio;  // cache safety concern threshold (percent)
-    //added by tqy
-    bool            EnableThrottle;     
+    bool            EnableThrottle;  // added by tqy
 };
 
 struct GlobalCacheConfig {
@@ -62,9 +62,9 @@ struct HybridCacheConfig {
     bool            UseGlobalCache = false;
     bool            FlushToRead = false;  // write to read cache after flush
     bool            CleanCacheByOpen = false;  // clean read cache when open file
-    //added by tqy
-    bool            EnableResize; // 是否开启普通的Resize策略
-    bool            EnableLinUCB; // 是否开启LinUCB
+    // added by tqy
+    bool            EnableResize;  // 是否开启普通的Resize策略
+    bool            EnableLinUCB;  // 是否开启LinUCB
 };
 
 bool GetHybridCacheConfig(const std::string& file, HybridCacheConfig& cfg);

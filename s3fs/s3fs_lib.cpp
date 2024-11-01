@@ -2104,7 +2104,7 @@ int posix_s3fs_stat(const char* _path, struct stat* stbuf) {
         if(0 == strcmp(path, "/")){
             stbuf->st_size = 4096;
         }
-        stbuf->st_blksize = 4096;
+        stbuf->st_blksize = BLOCK_SIZE;
         stbuf->st_blocks  = get_blocks(stbuf->st_size);
 
         S3FS_PRN_DBG("stat [path=%s] uid=%u, gid=%u, mode=%04o", path, (unsigned int)(stbuf->st_uid), (unsigned int)(stbuf->st_gid), stbuf->st_mode);

@@ -5,19 +5,13 @@ namespace HybridCache {
 
 ReadCache::ReadCache(const ReadCacheConfig& cfg,
         std::shared_ptr<DataAdaptor> dataAdaptor,
-        std::shared_ptr<ThreadPool> executor,   //below added
-        PoolId curr_id_, 
-        std::shared_ptr<Cache> curr_cache_) :
+        std::shared_ptr<ThreadPool> executor,
+        PoolId curr_id, std::shared_ptr<Cache> curr_cache) :
             cfg_(cfg), dataAdaptor_(dataAdaptor), executor_(executor) {
-    // Init();
-    if(curr_cache_ == nullptr)
-    {
+    if (nullptr == curr_cache)
         Init();
-    }
     else
-    {
-        CombinedInit(curr_id_, curr_cache_);
-    }
+        CombinedInit(curr_id, curr_cache);
 }
 
 folly::Future<int> ReadCache::Get(const std::string &key, size_t start,
@@ -70,8 +64,7 @@ folly::Future<int> ReadCache::Get(const std::string &key, size_t start,
     size_t fileStartOff = 0;
     std::vector<folly::Future<int>> fs;
     auto it = dataBoundary.begin();
-    while (remainLen > 0 && SUCCESS == res) 
-    {
+    while (remainLen > 0 && SUCCESS == res) {
         ByteBuffer stepBuffer(buffer.data + stepStart);
         fileStartOff = start + stepStart;
         if (it != dataBoundary.end()) {
@@ -258,23 +251,24 @@ int ReadCache::Init() {
     return res;
 }
 
-//added by tqy
-
-int ReadCache::CombinedInit(PoolId curr_id_, std::shared_ptr<Cache> curr_cache_)
-{
-    pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg, curr_id_, curr_cache_);
+// added by tqy
+int ReadCache::CombinedInit(PoolId curr_id, std::shared_ptr<Cache> curr_cache) {
+    pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg, curr_id, curr_cache);
     tokenBucket_ = std::make_shared<folly::TokenBucket>(
             cfg_.DownloadNormalFlowLimit, cfg_.DownloadBurstFlowLimit);
-    LOG(WARNING) << "[ReadCache]Init, curr_id : "<<  static_cast<int>(curr_id_) <<" curr_cache : "<< curr_cache_;
+    LOG(WARNING) << "[ReadCache]CombinedInit, curr_id:" << static_cast<int>(curr_id);
     return SUCCESS;
 }
 
-//add end
-
 std::string ReadCache::GetPageKey(const std::string &key, size_t pageIndex) {
-    std::string pageKey(key);
-    // pageKey.append(std::string(1, PAGE_SEPARATOR)).append(std::to_string(pageIndex));
-    pageKey.append(std::string(1, PAGE_SEPARATOR)).append("Read").append(std::to_string(pageIndex));
+    std::string pageKey;
+    if (key.length() <= 200) {
+        pageKey.append(key);
+    } else {
+        pageKey.append(key.substr(0, 200)).append(md5(key));
+    }
+    pageKey.append("_R").append(std::string(1, PAGE_SEPARATOR))
+           .append(std::to_string(pageIndex));
     return pageKey;
 }
 

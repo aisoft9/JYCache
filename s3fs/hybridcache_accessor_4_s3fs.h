@@ -12,13 +12,15 @@
 #include "accessor.h"
 
 using atomic_ptr_t = std::shared_ptr<std::atomic<int>>;
-//added by tqy referring to xyq
+
+// added by tqy referring to xyq
 using Cache = facebook::cachelib::LruAllocator;
 using facebook::cachelib::PoolId;
 #define MAXSIZE 1024
 #define IP_ADDR "127.0.0.1"
-#define IP_PORT 2333        // 服务器端口
-//added end---------
+#define IP_PORT 2333  // 服务器端口
+const int64_t FIX_SIZE = 1024 * 1024 * 256;  // 256M为分配单位
+const int64_t RESERVE_SIZE = 1024 * 1024 * 512;  // 512M保留空间
 
 class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
  public:
@@ -26,11 +28,11 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
     ~HybridCacheAccessor4S3fs();
 
     void Init();
-    //added by tqy referring to xyq
+
+    // added by tqy referring to xyq
     int InitCache();
     void LinUCBClient();
 
-    //end-------------
     void Stop();
 
     int Put(const std::string &key, size_t start, size_t len, const char* buf);
@@ -63,6 +65,8 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
     void InitLog();
     bool IsWriteCacheFull(size_t len);
     uint32_t WriteCacheRatio();
+    bool IsWritePoolFull(size_t len);
+    uint32_t WritePoolRatio();
     void BackGroundFlush();
 
  private:
@@ -72,7 +76,8 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
     std::atomic<bool> toStop_{false};
     std::atomic<bool> backFlushRunning_{false};
     std::thread bgFlushThread_;
-    //----------added by tqy referring to xyq for Resizing--------
+
+    // added by tqy referring to xyq for Resizing
     std::shared_ptr<Cache> ResizeWriteCache_;
     std::shared_ptr<Cache> ResizeReadCache_;
     PoolId writePoolId_;
@@ -81,19 +86,15 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
     uint64_t readCount_ = 0;
     uint64_t writeCacheSize_;
     uint64_t readCacheSize_;
-    int64_t fixSize = 1024 * 1024 * 256;  // 256M为分配单位
-    int64_t reserveSize = 1024 * 1024 * 512; //512M保留空间
-    //----------added by tqy referring to xyq for LinUCB--------
-    std::thread LinUCBThread;
-    std::atomic<bool> stopLinUCBThread{false};
+    
+    // added by tqy referring to xyq for LinUCB
+    std::thread LinUCBThread_;
+    std::atomic<bool> stopLinUCBThread_{false};
     uint64_t writeByteAcc_ = 0;
     uint64_t readByteAcc_ = 0;
     uint64_t writeTimeAcc_ = 0;
     uint64_t readTimeAcc_ = 0;
     uint32_t resizeInterval_;
-    uint32_t WritePoolRatio();
-    bool IsWritePoolFull(size_t len);
-
 };
 
 #endif // HYBRIDCACHE_ACCESSOR_4_S3FS_H_

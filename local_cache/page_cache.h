@@ -18,8 +18,8 @@
 namespace HybridCache {
 
 typedef folly::ConcurrentSkipList<std::string> StringSkipList;
-using facebook::cachelib::PoolId;
 using Cache = facebook::cachelib::LruAllocator;
+using facebook::cachelib::PoolId;
 
 enum class MetaPos {
     LOCK = 0,
@@ -94,20 +94,18 @@ class PageCache {
 
 class PageCacheImpl : public PageCache {
  public:
-    PageCacheImpl(const CacheConfig& cfg): PageCache(cfg) {
+    PageCacheImpl(const CacheConfig& cfg) : PageCache(cfg) {
         bitmapSize_ = cfg_.PageBodySize / BYTE_LEN;
-        LOG(WARNING) << "[TestOutPut] PageCache Init with size : "<<GetCacheSize();
     }
-    //added by tqy
-    PageCacheImpl(const CacheConfig& cfg, PoolId curr_pool_id_, std::shared_ptr<Cache> curr_cache_):PageCache(cfg)
-    {
-        bitmapSize_ = cfg_.PageBodySize / BYTE_LEN;
-        cache_ = curr_cache_;
-        pool_ = curr_pool_id_;
-    }
-    
 
-    //added end
+    // added by tqy
+    PageCacheImpl(const CacheConfig& cfg, PoolId curr_pool_id, 
+                  std::shared_ptr<Cache> curr_cache) : PageCache(cfg) {
+        bitmapSize_ = cfg_.PageBodySize / BYTE_LEN;
+        cache_ = curr_cache;
+        pool_ = curr_pool_id;
+    }
+
     ~PageCacheImpl() {}
 
     int Init();
@@ -159,13 +157,13 @@ class PageCacheImpl : public PageCache {
     }
 
     Cache::WriteHandle FindOrCreateWriteHandle(const std::string &key);
-    
 
  private:
     std::shared_ptr<Cache> cache_;
     PoolId pool_;
     std::atomic<uint64_t> pageNum_{0};
     uint32_t bitmapSize_;
+    std::atomic<int64_t> lock_{0};
 };
 
 }  // namespace HybridCache

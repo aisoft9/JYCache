@@ -111,6 +111,7 @@ void InitGlobalConfig() {
     read_cache.CacheCfg.PageBodySize = FLAGS_read_page_body_size;
     read_cache.CacheCfg.PageMetaSize = FLAGS_read_page_meta_size;
     read_cache.CacheCfg.EnableCAS = FLAGS_read_cas;
+    read_cache.CacheCfg.SafeMode = true;
     read_cache.CacheCfg.CacheLibCfg.EnableNvmCache = FLAGS_read_nvm_cache;
 
     brpc::FLAGS_socket_max_unwritten_bytes = FLAGS_max_inflight_payload_size * 2;

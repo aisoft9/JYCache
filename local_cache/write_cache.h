@@ -9,40 +9,20 @@
 #include "folly/concurrency/ConcurrentHashMap.h"
 
 #include "page_cache.h"
-//-----------tqy--------------
 #include "throttle.h"
 
 namespace HybridCache {
 
 class WriteCache {
  public:
-    // WriteCache(const WriteCacheConfig& cfg) : cfg_(cfg) { Init(); }
-    //added by tqy
-    WriteCache(const WriteCacheConfig& cfg, PoolId curr_id_ = NULL, std::shared_ptr<Cache> curr_cache_ = nullptr) : cfg_(cfg) 
-    { 
-        if(curr_cache_ == nullptr)
-        {
-            Init(); 
-        }
-        else
-        {
-            CombinedInit(curr_id_, curr_cache_);
-        }
-        //Throttle
-        if(cfg_.EnableThrottle)
-        {
-            throttling_thread_ = std::thread(&WriteCache::Dealing_throttling, this);
-            LOG(WARNING) <<"[WriteCache] USE_THROTTLING";
-        }
-        else
-        {
-            LOG(WARNING) <<"[WriteCache] NO USE_THROTTLING";
-        }
-    }
-    //---------------
+    // added by tqy
+    WriteCache(const WriteCacheConfig& cfg,
+               PoolId curr_id = NULL, 
+               std::shared_ptr<Cache> curr_cache = nullptr);
+
     WriteCache() = default;
     ~WriteCache() { Close(); }
-    
+
     enum class LockType {
         NONE = 0,
         ALREADY_LOCKED = -1,
@@ -82,25 +62,25 @@ class WriteCache {
 
  private:
     int Init();
-    
-    //added by tqy
-    int CombinedInit(PoolId curr_id_, std::shared_ptr<Cache> curr_cache_);
-    void Dealing_throttling();
-    //added end
-    
+
     void Lock(const std::string &key);
 
     std::string GetPageKey(const std::string &key, size_t pageIndex);
+
+    // added by tqy
+    int CombinedInit(PoolId curr_id, std::shared_ptr<Cache> curr_cache);
+    void Dealing_throttling();
 
  private:
     WriteCacheConfig cfg_;
     std::shared_ptr<PageCache> pageCache_;
     folly::ConcurrentHashMap<std::string, time_t> keys_;  // <key, create_time>
     StringSkipList::Accessor keyLocks_ = StringSkipList::create(SKIP_LIST_HEIGHT);  // presence key indicates lock
-//------------------tqy---------------
-    HybridCache::Throttle throttling;
-    std::thread throttling_thread_;//改成一个单独的线程
-    std::atomic<bool> throttling_thread_running_{false};//调度线程是否启用
+
+    // added by tqy
+    HybridCache::Throttle throttling_;
+    std::thread throttling_thread_;  // 改成一个单独的线程
+    std::atomic<bool> throttling_thread_running_{false};  // 调度线程是否启用
 };
 
 }  // namespace HybridCache

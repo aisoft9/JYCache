@@ -5,6 +5,20 @@
 
 namespace HybridCache {
 
+WriteCache::WriteCache(const WriteCacheConfig& cfg, PoolId curr_id,
+                       std::shared_ptr<Cache> curr_cache) : cfg_(cfg) {
+    if (nullptr == curr_cache)
+        Init();
+    else
+        CombinedInit(curr_id, curr_cache);
+
+    // Throttle
+    if (cfg_.EnableThrottle) {
+        throttling_thread_ = std::thread(&WriteCache::Dealing_throttling, this);
+        LOG(WARNING) << "[WriteCache] USE_THROTTLING";
+    }
+}
+
 int WriteCache::Put(const std::string &key, size_t start, size_t len,
                     const ByteBuffer &buffer) {
     std::chrono::steady_clock::time_point startTime;
@@ -19,13 +33,13 @@ int WriteCache::Put(const std::string &key, size_t start, size_t len,
     uint64_t writePageCnt = 0;
     size_t remainLen = len;
 
+    // added by tqy
+    if (cfg_.EnableThrottle)
+        this->throttling_.Put_Consume(key, len);
+
     while (remainLen > 0) {
         writeLen = pagePos + remainLen > pageSize ? pageSize - pagePos : remainLen;
         std::string pageKey = std::move(GetPageKey(key, index));
-        //----------tqy--------
-        if(cfg_.EnableThrottle)
-            this->throttling.Put_Consume(key, writeLen);
-        //---------------------
         res = pageCache_->Write(pageKey, pagePos, writeLen,
                                 (buffer.data + writeOffset));
         if (SUCCESS != res) break;
@@ -152,10 +166,9 @@ int WriteCache::Delete(const std::string &key, LockType type) {
     if (LockType::ALREADY_LOCKED != type) {
         Lock(key);
     }
-    //-----tqy------
-    if(cfg_.EnableThrottle)
-        throttling.Del_File(key);
-    //--------------
+
+    if (cfg_.EnableThrottle)  // added by tqy
+        throttling_.Del_File(key);
     keys_.erase(key);
     size_t delPageNum = 0;
     std::string firstPage = std::move(GetPageKey(key, 0));
@@ -249,9 +262,6 @@ int WriteCache::GetAllKeys(std::map<std::string, time_t>& keys) {
 
     for (auto& it : keys_) {
         keys[it.first] = it.second;
-        //---------tqy-------
-        if(cfg_.EnableThrottle)
-            throttling.Del_File(it.first);
     }
     if (EnableLogging) {
         double totalTime = std::chrono::duration<double, std::milli>(
@@ -265,16 +275,14 @@ int WriteCache::GetAllKeys(std::map<std::string, time_t>& keys) {
 void WriteCache::Close() {
     pageCache_->Close();
     keys_.clear();
-    //------------------tqy------------
-    if(cfg_.EnableThrottle)
-    {
-        throttling.Close();
-        throttling_thread_running_.store(false, std::memory_order_release);//线程终止
+    // added by tqy
+    if (cfg_.EnableThrottle) {
+        throttling_.Close();
+        throttling_thread_running_.store(false, std::memory_order_release);  // 线程终止
         if (throttling_thread_.joinable()) {
             throttling_thread_.join();
         }
     }
-    
     LOG(WARNING) << "[WriteCache]Close";
 }
 
@@ -289,7 +297,6 @@ size_t WriteCache::GetCacheMaxSize() {
 int WriteCache::Init() {
     pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg);
     int res = pageCache_->Init();
-    
     LOG(WARNING) << "[WriteCache]Init, res:" << res;
     return res;
 }
@@ -299,48 +306,47 @@ void WriteCache::Lock(const std::string &key) {
 }
 
 std::string WriteCache::GetPageKey(const std::string &key, size_t pageIndex) {
-    std::string pageKey(key);
-    // pageKey.append(std::string(1, PAGE_SEPARATOR)).append(std::to_string(pageIndex));
-    pageKey.append(std::string(1, PAGE_SEPARATOR)).append("Write").append(std::to_string(pageIndex));// tqy add for cachelib combination
+    std::string pageKey;
+    if (key.length() <= 200) {
+        pageKey.append(key);
+    } else {
+        pageKey.append(key.substr(0, 200)).append(md5(key));
+    }
+    pageKey.append("_W").append(std::string(1, PAGE_SEPARATOR))
+           .append(std::to_string(pageIndex));
     return pageKey;
 }
 
-//---------------------tqy----------------------
-
-int WriteCache::CombinedInit (PoolId curr_id_, std::shared_ptr<Cache> curr_cache_)
-{
-    this->pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg, curr_id_, curr_cache_);
-    LOG(WARNING) << "[WriteCache]Init, curr_id : "<< static_cast<int>(curr_id_) <<" curr_cache : "<< curr_cache_;
+// added by tqy
+int WriteCache::CombinedInit(PoolId curr_id, std::shared_ptr<Cache> curr_cache) {
+    this->pageCache_ = std::make_shared<PageCacheImpl>(cfg_.CacheCfg, curr_id, curr_cache);
+    LOG(WARNING) << "[WriteCache]CombinedInit, curr_id:"<< static_cast<int>(curr_id);
     return SUCCESS;
 }
 
-//开一个线程负责记录文件的流量，并且后续与调度器进行交互
-void WriteCache::Dealing_throttling()
-{
-    if(!cfg_.EnableThrottle)
-    {
+// 开一个线程负责记录文件的流量，并且后续与调度器进行交互
+void WriteCache::Dealing_throttling() {
+    if (!cfg_.EnableThrottle)
         return;
-    }
-    LOG(WARNING) << "[WriteCache] Throttling Thread start";
-    //memory_order_release确保在此操作之前的所有写操作在其他线程中可见。
+
+    LOG(WARNING) << "[WriteCache] throttling_ Thread start";
+    // memory_order_release确保在此操作之前的所有写操作在其他线程中可见。
     throttling_thread_running_.store(true, std::memory_order_release);
-    while(throttling_thread_running_.load(std::memory_order_acquire))
-    {
-        //接收到调度器传来的新的带宽
-        //memory_order_acquire确保此操作之后的所有读写操作在其他线程中可见。
-        std::string new_limit = throttling.Cal_New4Test();
-        //new_bw = 0;
-        throttling.SetNewLimits(new_limit);
-        throttling.CleanBlockTime();
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));//每0.1s Resize一次
-        // for(auto temp : throttling.job_bandwidth_)
+    while (throttling_thread_running_.load(std::memory_order_acquire)) {
+        // 接收到调度器传来的新的带宽
+        // memory_order_acquire确保此操作之后的所有读写操作在其他线程中可见。
+        std::string new_limit = throttling_.Cal_New4Test();
+        // new_bw = 0;
+        throttling_.SetNewLimits(new_limit);
+        throttling_.CleanBlockTime();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 每0.1s Resize一次
+        // for(auto temp : throttling_.job_bandwidth_)
         // {
         //     new_bw +=   temp.second;
         // }
         // curr_bw = std::max(new_bw, 649651540.0);
     }
-    LOG(WARNING) << "[WriteCache] Throttling Thread end";
+    LOG(WARNING) << "[WriteCache] throttling_ Thread end";
 }
-
 
 }  // namespace HybridCache

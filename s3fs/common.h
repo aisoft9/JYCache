@@ -34,6 +34,7 @@
 static constexpr int64_t  FIVE_GB            = 5LL * 1024LL * 1024LL * 1024LL;
 static constexpr off_t    MIN_MULTIPART_SIZE = 5 * 1024 * 1024;
 static constexpr int      NEW_CACHE_FAKE_FD  = -2;
+static constexpr int      BLOCK_SIZE  = 4096;
 
 extern bool           foreground;
 extern bool           nomultipart;

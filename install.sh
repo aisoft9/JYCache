@@ -3,22 +3,22 @@
 if [ ! -d "./JYCache_Env" ]; then
     case $(uname -m) in
         x86_64)
-            wget https://madstorage.s3.cn-north-1.jdcloud-oss.com/JYCache_Env_x64.tgz
-            md5=`md5sum JYCache_Env_x64.tgz | awk {'print $1'}`
-            if [ "$md5" != "cd27e0db8b1fc33b88bf1c467ed012b8" ]; then
+            wget https://madstorage.s3.cn-north-1.jdcloud-oss.com/JYCache_Env_x64_20241101.tgz
+            md5=`md5sum JYCache_Env_x64_20241101.tgz | awk {'print $1'}`
+            if [ "$md5" != "4c685f0465bbe08191c0308889b59826" ]; then
                 echo 'JYCache_Env version inconsistency!'
                 exit 1
             fi
-            tar -zxvf JYCache_Env_x64.tgz
+            tar -zxvf JYCache_Env_x64_20241101.tgz
         ;;
         aarch64)
-            wget https://madstorage.s3.cn-north-1.jdcloud-oss.com/JYCache_Env_arm64.tgz
-            md5=`md5sum JYCache_Env_arm64.tgz | awk {'print $1'}`
-            if [ "$md5" != "5717814115a9ce3f2fa7f6759449e5bf" ]; then
+            wget https://madstorage.s3.cn-north-1.jdcloud-oss.com/JYCache_Env_arm64_20241101.tgz
+            md5=`md5sum JYCache_Env_arm64_20241101.tgz | awk {'print $1'}`
+            if [ "$md5" != "4fcb8fec4217869e66747cd7841de8dc" ]; then
                 echo 'JYCache_Env version inconsistency!'
                 exit 1
             fi
-            tar -zxvf JYCache_Env_arm64.tgz
+            tar -zxvf JYCache_Env_arm64_20241101.tgz
         ;;
     esac
 fi
