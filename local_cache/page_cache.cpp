@@ -96,15 +96,15 @@ void PageCache::SetBitMap(char* pageMemory, int pos, int len, bool valid) {
 }
 
 int PageCacheImpl::Init() {
-    const uint64_t REDUNDANT_SIZE = 1024 * 1024 * 1024;
     const unsigned bucketsPower = 25;
     const unsigned locksPower = 15;
 
     Cache::Config config;
     config
-        .setCacheSize(cfg_.MaxCacheSize + REDUNDANT_SIZE)
+        .setCacheSize(cfg_.MaxCacheSize)
         .setCacheName(cfg_.CacheName)
         .setAccessConfig({bucketsPower, locksPower})
+        .enableItemReaperInBackground(std::chrono::milliseconds{0})
         .validate();
     if (cfg_.CacheLibCfg.EnableNvmCache) {
         Cache::NvmCacheConfig nvmConfig;
@@ -120,9 +120,9 @@ int PageCacheImpl::Init() {
 
         config.enableNvmCache(nvmConfig).validate();
     }
-    cache_ = std::make_unique<Cache>(config);
-    pool_ = cache_->addPool(cfg_.CacheName + "_pool", cfg_.MaxCacheSize);
-
+    cache_ = std::make_shared<Cache>(config);
+    pool_ = cache_->addPool(cfg_.CacheName + "_pool",
+                            cache_->getCacheMemoryStats().ramCacheSize);
     LOG(WARNING) << "[PageCache]Init, name:" << config.getCacheName()
                  << ", size:" << config.getCacheSize()
                  << ", dir:" << config.getCacheDir();
@@ -380,7 +380,16 @@ int PageCacheImpl::DeletePart(const std::string &key,
 
         bool isDel = false;
         if (isEmpty) {
-            if (cache_->remove(writeHandle) == Cache::RemoveRes::kSuccess) {
+            if (cfg_.SafeMode) {  // exclusive lock
+                while(true) {
+                    int64_t expected = 0;
+                    if (lock_.compare_exchange_weak(expected, -1))
+                        break;
+                }
+            }
+            auto rr = cache_->remove(writeHandle);
+            if (cfg_.SafeMode) lock_.store(0);  // release exclusive lock
+            if (rr == Cache::RemoveRes::kSuccess) {
                 pageNum_.fetch_sub(1);
                 pagesList_.erase(key);
                 isDel = true;
@@ -399,7 +408,15 @@ int PageCacheImpl::DeletePart(const std::string &key,
 
 int PageCacheImpl::Delete(const std::string &key) {
     assert(cache_);
+    if (cfg_.SafeMode) {  // exclusive lock
+        while(true) {
+            int64_t expected = 0;
+            if (lock_.compare_exchange_weak(expected, -1))
+                break;
+        }
+    }
     int res = cache_->remove(key) == Cache::RemoveRes::kSuccess ? SUCCESS : PAGE_NOT_FOUND;
+    if (cfg_.SafeMode) lock_.store(0);  // release exclusive lock
     if (SUCCESS == res) {
         pageNum_.fetch_sub(1);
         pagesList_.erase(key);
@@ -407,11 +424,19 @@ int PageCacheImpl::Delete(const std::string &key) {
     return res;
 }
 
-Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key) 
-{
+Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key) {
     auto writeHandle = cache_->findToWrite(key);
     if (!writeHandle) {
+        if (cfg_.SafeMode) {  // shared lock
+            while(true) {
+                int64_t lock = lock_.load();
+                if (lock >= 0 && lock_.compare_exchange_weak(lock, lock + 1))
+                    break;
+            }
+        }
         writeHandle = cache_->allocate(pool_, key, GetRealPageSize());
+        if (cfg_.SafeMode) lock_.fetch_sub(1);  // release shared lock
+
         assert(writeHandle);
         assert(writeHandle->getMemory());
         // need init
@@ -425,7 +450,7 @@ Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key
                 pageNum_.fetch_add(1);
                 pagesList_.insert(key);
             }
-        } else {//WriteCache
+        } else {
             if (cache_->insert(writeHandle)) {
                 pageNum_.fetch_add(1);
                 pagesList_.insert(key);

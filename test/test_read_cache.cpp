@@ -35,6 +35,7 @@ TEST(ReadCache, Init) {
     cfg.CacheCfg.PageBodySize = 64 * 1024;
     cfg.CacheCfg.PageMetaSize = 1024;
     cfg.CacheCfg.EnableCAS = true;
+    cfg.CacheCfg.SafeMode = true;
     cfg.CacheCfg.CacheLibCfg.EnableNvmCache = false;
 
     executor = std::make_shared<ThreadPool>(16);

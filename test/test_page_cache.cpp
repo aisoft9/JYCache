@@ -31,6 +31,7 @@ TEST(PageCache, Init) {
     cfg.PageBodySize = 64 * 1024;
     cfg.PageMetaSize = 1024;
     cfg.EnableCAS = true;
+    cfg.SafeMode = true;
     cfg.CacheLibCfg.EnableNvmCache = false;
     page = std::make_shared<PageCacheImpl>(cfg);
     EXPECT_EQ(0, page->Init());

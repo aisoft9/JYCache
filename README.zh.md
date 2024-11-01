@@ -142,7 +142,7 @@ cd ./minio && sh stop.sh && cd ..
 
 ## 常见问题
 
-[常见问题](https://www.osredm.com/jiuyuan/JYCache/tree/master/doc/frequently_asked_questions.md)
+[常见问题](doc/frequently_asked_questions.md)
 
 ## 许可
 

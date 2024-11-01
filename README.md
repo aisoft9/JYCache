@@ -1,4 +1,4 @@
-# JYCache 
+# JYCache
 
 **九源缓存存储系统（简称：JYCache）** 是一款面向个人使用、大模型训练推理等多种场景，适配大容量对象存储等多种底层存储形态，高性能、易扩展的分布式缓存存储系统。通过层次化架构、接入层优化、I/O优化等多种组合优化，JYCache 不仅支持文件顺序/随机读写，其读写性能也领先国际主流产品 Alluxio。JYCache 现支持在 X86（Intel、AMD、海光等）及 ARM（鲲鹏、飞腾等）平台下运行。
 
@@ -142,7 +142,7 @@ cd ./minio && sh stop.sh && cd ..
 
 ## 常见问题
 
-[常见问题](https://www.osredm.com/jiuyuan/JYCache/tree/master/doc/frequently_asked_questions.md)
+[常见问题](doc/frequently_asked_questions.md)
 
 ## 许可
 

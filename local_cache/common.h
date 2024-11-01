@@ -35,6 +35,10 @@ struct ByteBuffer {
 void split(const std::string& str, const char delim,
            std::vector<std::string>& items);
 
+std::string base64(const unsigned char* input, size_t length);
+
+std::string md5(const std::string& str);
+
 }  // namespace HybridCache
 
 #endif // HYBRIDCACHE_COMMON_H_
