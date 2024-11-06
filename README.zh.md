@@ -44,6 +44,62 @@ JYCache 是一款面向个人使用、大模型训练推理等多种场景，适
 |  16K |  2153MiB/s | 5705MiB/s  | 9711MiB/s | 
 | 128K  | 7498MiB/s  | 23.5GiB/s  | 31.2GiB/s |
 
+#### 与Alluxio对比
+使用 FIO 测试工具对比与Alluxio2.9.0的顺序读写性能，测试不同环境下性能对比情况。
+- architecture: aarch64，CPU: Kunpeng 920
+
+顺序读性能
+
+|  BS | JYCache(intercept)  | Alluxio2.9.0 |
+| ------------ | ------------ | ------------ | 
+|  1K | 103MiB/s  |  64.3MiB/s | 
+|  2K |  205MiB/s | 126MiB/s  | 
+|  4K  | 390MiB/s  | 244MiB/s  | 
+
+顺序写性能
+
+|  BS | JYCache(intercept)  | Alluxio2.9.0 |
+| ------------ | ------------ | ------------ | 
+|  1K | 133MiB/s  |  58.5MiB/s | 
+|  2K |  258MiB/s | 96.5MiB/s  | 
+|  4K  | 478MiB/s  | 165MiB/s  | 
+
+- architecture: aarch64，CPU: Phytium,S2500/64 C00
+
+顺序读性能
+
+|  BS | JYCache(intercept)  | Alluxio2.9.0 |
+| ------------ | ------------ | ------------ | 
+|  1K | 54.2MiB/s  |  24.1MiB/s | 
+|  2K |  93MiB/s | 49.5MiB/s  | 
+|  4K  | 201MiB/s  | 97MiB/s  | 
+
+顺序写性能
+
+|  BS | JYCache(intercept)  | Alluxio2.9.0 |
+| ------------ | ------------ | ------------ | 
+|  1K | 64.8MiB/s  |  18.7MiB/s | 
+|  2K |  125MiB/s | 32.4MiB/s  | 
+|  4K  | 241MiB/s  | 60.1MiB/s  |
+
+- architecture: X86，CPU: Intel(R) Xeon(R) Gold 6240R CPU
+
+顺序读性能
+
+|  BS | JYCache(intercept)  | Alluxio2.9.0 |
+| ------------ | ------------ | ------------ | 
+|  1K | 176MiB/s  |  37.7MiB/s | 
+|  2K |  381MiB/s | 63.5MiB/s  | 
+|  4K  | 696MiB/s  | 131MiB/s  | 
+
+顺序写性能
+
+|  BS | JYCache(intercept)  | Alluxio2.9.0 |
+| ------------ | ------------ | ------------ | 
+|  1K | 228MiB/s  |  25.9MiB/s | 
+|  2K |  435MiB/s | 53MiB/s  | 
+|  4K  | 788MiB/s  | 91.1MiB/s  |
+
 ## 系统构建
 **环境要求**
 
@@ -140,9 +196,11 @@ sh stop_intercept_server.sh
 cd ./minio && sh stop.sh && cd ..
 ```
 
-## 常见问题
+## 其他
 
 [常见问题](doc/frequently_asked_questions.md)
+[配置说明](doc/conf_spec/newcache.conf_spec)
+[部署说明](doc/Deployment_doc.pdf)
 
 ## 许可
 
