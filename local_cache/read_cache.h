@@ -47,7 +47,8 @@ class ReadCache {
     // added by tqy
     int CombinedInit(PoolId curr_id, std::shared_ptr<Cache> curr_cache);
 
-    std::string GetPageKey(const std::string &key, size_t pageIndex);
+    std::string GetStoreKey(const std::string &key);
+    std::string GetPageKey(const std::string &storeKey, size_t pageIndex);
 
  private:
     ReadCacheConfig cfg_;

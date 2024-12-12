@@ -10,8 +10,15 @@
 #include <thread>
 
 #include "accessor.h"
+#include "metaheader.h"
 
 using atomic_ptr_t = std::shared_ptr<std::atomic<int>>;
+using atomic_ptr_u64t = std::shared_ptr<std::atomic<uint64_t>>;
+
+struct FileInfo {
+   atomic_ptr_u64t realsize;  // real file size
+   headers_t orgmeta;  // original headers at opening
+};
 
 // added by tqy referring to xyq
 using Cache = facebook::cachelib::LruAllocator;
@@ -61,6 +68,11 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
         return executor_.get();
     }
 
+    size_t GetRealsize(const std::string &key) const;
+    void UpdateRealsize(const std::string &key, off_t size);
+    void TruncateRealsize(const std::string &key, off_t size);
+    void InitFileInfo(const std::string &key, off_t size, const headers_t* meta);
+
  private:
     void InitLog();
     bool IsWriteCacheFull(size_t len);
@@ -76,6 +88,7 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
     std::atomic<bool> toStop_{false};
     std::atomic<bool> backFlushRunning_{false};
     std::thread bgFlushThread_;
+    folly::ConcurrentHashMap<std::string, FileInfo> fileInfo_;
 
     // added by tqy referring to xyq for Resizing
     std::shared_ptr<Cache> ResizeWriteCache_;

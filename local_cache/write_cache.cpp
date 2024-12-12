@@ -32,6 +32,7 @@ int WriteCache::Put(const std::string &key, size_t start, size_t len,
     uint64_t writeOffset = 0;
     uint64_t writePageCnt = 0;
     size_t remainLen = len;
+    std::string storeKey = std::move(GetStoreKey(key));
 
     // added by tqy
     if (cfg_.EnableThrottle)
@@ -39,7 +40,7 @@ int WriteCache::Put(const std::string &key, size_t start, size_t len,
 
     while (remainLen > 0) {
         writeLen = pagePos + remainLen > pageSize ? pageSize - pagePos : remainLen;
-        std::string pageKey = std::move(GetPageKey(key, index));
+        std::string pageKey = std::move(GetPageKey(storeKey, index));
         res = pageCache_->Write(pageKey, pagePos, writeLen,
                                 (buffer.data + writeOffset));
         if (SUCCESS != res) break;
@@ -77,10 +78,11 @@ int WriteCache::Get(const std::string &key, size_t start, size_t len,
     size_t bufOffset = 0;
     size_t remainLen = len;
     uint64_t readPageCnt = 0;
+    std::string storeKey = std::move(GetStoreKey(key));
 
     while (remainLen > 0) {
         readLen = pagePos + remainLen > pageSize ? pageSize - pagePos : remainLen;
-        std::string pageKey = std::move(GetPageKey(key, index));
+        std::string pageKey = std::move(GetPageKey(storeKey, index));
         std::vector<std::pair<size_t, size_t>> stepDataBoundary;
         int tmpRes = pageCache_->Read(pageKey, pagePos, readLen,
                 (buffer.data + bufOffset), stepDataBoundary);
@@ -126,12 +128,13 @@ int WriteCache::GetAllCacheWithLock(const std::string &key,
     int res = SUCCESS;
     Lock(key);
 
-    std::string firstPage = std::move(GetPageKey(key, 0));
+    std::string storeKey = std::move(GetStoreKey(key));
+    std::string firstPage = std::move(GetPageKey(storeKey, 0));
     auto pageKey = pageCache_->GetPageList().lower_bound(firstPage);
     while (pageKey != pageCache_->GetPageList().end()) {
         std::vector<std::string> tokens;
         split(*pageKey, PAGE_SEPARATOR, tokens);
-        if (key != tokens[0]) break;
+        if (storeKey != tokens[0]) break;
 
         size_t pageIdx = 0;
         std::stringstream sstream(tokens[1]);
@@ -171,12 +174,13 @@ int WriteCache::Delete(const std::string &key, LockType type) {
         throttling_.Del_File(key);
     keys_.erase(key);
     size_t delPageNum = 0;
-    std::string firstPage = std::move(GetPageKey(key, 0));
+    std::string storeKey = std::move(GetStoreKey(key));
+    std::string firstPage = std::move(GetPageKey(storeKey, 0));
     auto pageKey = pageCache_->GetPageList().lower_bound(firstPage);
     while (pageKey != pageCache_->GetPageList().end()) {
         std::vector<std::string> tokens;
         split(*pageKey, PAGE_SEPARATOR, tokens);
-        if (key != tokens[0]) break;
+        if (storeKey != tokens[0]) break;
         int tmpRes = pageCache_->Delete(*pageKey);
         if (SUCCESS == tmpRes) {
             ++delPageNum;
@@ -207,10 +211,11 @@ int WriteCache::Truncate(const std::string &key, size_t len) {
     uint32_t pageSize = cfg_.CacheCfg.PageBodySize;
     uint64_t index = len / pageSize;
     uint64_t pagePos = len % pageSize;
+    std::string storeKey = std::move(GetStoreKey(key));
 
     if (0 != pagePos) {
         uint32_t TruncateLen = pageSize - pagePos;
-        std::string TruncatePage = std::move(GetPageKey(key, index));
+        std::string TruncatePage = std::move(GetPageKey(storeKey, index));
         int tmpRes = pageCache_->DeletePart(TruncatePage, pagePos, TruncateLen);
         if (SUCCESS != tmpRes && PAGE_NOT_FOUND != tmpRes) {
             res = tmpRes;
@@ -221,12 +226,12 @@ int WriteCache::Truncate(const std::string &key, size_t len) {
     size_t delPageNum = 0;
     if (SUCCESS == res) {
         Lock(key);
-        std::string firstPage = std::move(GetPageKey(key, index));
+        std::string firstPage = std::move(GetPageKey(storeKey, index));
         auto pageKey = pageCache_->GetPageList().lower_bound(firstPage);
         while (pageKey != pageCache_->GetPageList().end()) {
             std::vector<std::string> tokens;
             split(*pageKey, PAGE_SEPARATOR, tokens);
-            if (key != tokens[0]) break;
+            if (storeKey != tokens[0]) break;
             int tmpRes = pageCache_->Delete(*pageKey);
             if (SUCCESS == tmpRes) {
                 ++delPageNum;
@@ -305,14 +310,20 @@ void WriteCache::Lock(const std::string &key) {
     while(!keyLocks_.add(key));
 }
 
-std::string WriteCache::GetPageKey(const std::string &key, size_t pageIndex) {
-    std::string pageKey;
+std::string WriteCache::GetStoreKey(const std::string &key) {
+    std::string storeKey;
     if (key.length() <= 200) {
-        pageKey.append(key);
+        storeKey.append(key);
     } else {
-        pageKey.append(key.substr(0, 200)).append(md5(key));
+        storeKey.append(key.substr(0, 200)).append(md5(key));
     }
-    pageKey.append("_W").append(std::string(1, PAGE_SEPARATOR))
+    storeKey.append("_W");
+    return storeKey;
+}
+
+std::string WriteCache::GetPageKey(const std::string &storeKey, size_t pageIndex) {
+    std::string pageKey(storeKey);
+    pageKey.append(std::string(1, PAGE_SEPARATOR))
            .append(std::to_string(pageIndex));
     return pageKey;
 }

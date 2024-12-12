@@ -100,7 +100,6 @@ bool GetHybridCacheConfig(const std::string& file, HybridCacheConfig& cfg) {
     // add by tqy
     conf.GetValueFatalIfFail("EnableResize", cfg.EnableResize);
     conf.GetValueFatalIfFail("EnableLinUCB", cfg.EnableLinUCB);
-    
 
     conf.PrintConfig();
     return CheckConfig(cfg);

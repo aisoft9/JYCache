@@ -633,6 +633,7 @@ FdEntity* FdManager::Open(int& fd, const char* path, const headers_t* pmeta, off
 
         if(use_newcache){
             ent->UpdateRealsize(size);
+            accessor->InitFileInfo(path, size, pmeta);
         }
 
         if(!cache_path.empty()){

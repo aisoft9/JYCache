@@ -168,6 +168,17 @@ int PageCacheImpl::Read(const std::string &key,
     assert(cfg_.PageBodySize >= pagePos + length);
     assert(cache_);
 
+    /*
+     * It will coredump at facebook::cachelib::SlabHeader::isFlagSet in arm architecture.
+     * read & write need to avoid concurrency with delete
+     */
+    if (cfg_.SafeMode) {  // shared lock
+        while(true) {
+            int64_t lock = lock_.load();
+            if (lock >= 0 && lock_.compare_exchange_weak(lock, lock + 1))
+                break;
+        }
+    }
     int res = SUCCESS;
     while (true) {
         auto readHandle = cache_->find(key);
@@ -251,6 +262,7 @@ int PageCacheImpl::Read(const std::string &key,
         newVer = GetNewVer(pageValue);
         if (lastVer == newVer) break;
     }
+    if (cfg_.SafeMode) lock_.fetch_sub(1);  // release shared lock
     return res;
 }
 

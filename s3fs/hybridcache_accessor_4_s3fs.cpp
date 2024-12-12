@@ -173,15 +173,16 @@ int HybridCacheAccessor4S3fs::Put(const std::string &key, size_t start,
 
     int res = writeCache_->Put(key, start, len, ByteBuffer(const_cast<char *>(buf), len));
 
-    int fd = -1;
-    FdEntity* ent = nullptr;
-    if (SUCCESS == res && nullptr == (ent = FdManager::get()->GetFdEntity(
-                key.c_str(), fd, false, AutoLock::ALREADY_LOCKED))) {
-        res = -EIO;
-        LOG(ERROR) << "[Accessor]Put, can't find opened path, file:" << key;
-    }
     if (SUCCESS == res) {
-        ent->UpdateRealsize(start + len);  // TODO: size如何获取?并发情况下的一致性?
+        int fd = -1;
+        FdEntity* ent = nullptr;
+        if (nullptr == (ent = FdManager::get()->GetFdEntity(
+                    key.c_str(), fd, false, AutoLock::ALREADY_LOCKED))) {
+            LOG(ERROR) << "[Accessor]Put, can't find opened path, file:" << key;
+        } else {
+            ent->UpdateRealsize(start + len);  // TODO: size如何获取?并发情况下的一致性?
+        }
+        UpdateRealsize(key, start + len);
     }
 
     fileLock->second->fetch_sub(1);  // release shared lock
@@ -286,17 +287,24 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
             break;
     }
 
-    int res = SUCCESS;
+    size_t realSize = 0;
+    std::map<std::string, std::string> realHeaders;
     int fd = -1;
     FdEntity* ent = nullptr;
     if (nullptr == (ent = FdManager::get()->GetFdEntity(
                 key.c_str(), fd, false, AutoLock::ALREADY_LOCKED))) {
-        res = -EIO;
         LOG(ERROR) << "[Accessor]Flush, can't find opened path, file:" << key;
-    }
-    size_t realSize = 0;
-    std::map<std::string, std::string> realHeaders;
-    if (SUCCESS == res) {
+        realSize = GetRealsize(key);
+        // file size >= 10G stop LinUCB
+        if (realSize >= 10737418240)
+            stopLinUCBThread_.store(true, std::memory_order_release);
+        auto fileInfo = fileInfo_.find(key);
+        if (fileInfo_.end() != fileInfo) {
+            for (auto &it : fileInfo->second.orgmeta) {
+                realHeaders[it.first] = it.second;
+            }
+        }
+    } else {
         realSize = ent->GetRealsize();
         // file size >= 10G stop LinUCB
         if (realSize >= 10737418240)
@@ -306,7 +314,8 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
         }
     }
 
-    if (SUCCESS == res && cfg_.UseGlobalCache) {
+    int res = SUCCESS;
+    if (cfg_.UseGlobalCache) {
         // first head S3，upload a empty file when the file does not exist
         size_t size;
         std::map<std::string, std::string> headers;
@@ -447,10 +456,12 @@ int HybridCacheAccessor4S3fs::Delete(const std::string &key) {
 
     int res = writeCache_->Delete(key);
     if (SUCCESS == res) {
-        res = readCache_->Delete(key);
-    }
-    if (SUCCESS == res) {
+        readCache_->Delete(key);
         res = dataAdaptor_->Delete(key).get();
+    }
+
+    if (SUCCESS == res) {
+        fileInfo_.erase(key);
     }
 
     fileLock->second->store(0);
@@ -485,30 +496,32 @@ int HybridCacheAccessor4S3fs::Truncate(const std::string &key, size_t size) {
             break;
     }
 
-    int res = SUCCESS;
+    size_t realSize = 0;
     int fd = -1;
     FdEntity* ent = nullptr;
     if (nullptr == (ent = FdManager::get()->GetFdEntity(key.c_str(), fd,
                 false, AutoLock::ALREADY_LOCKED))) {
-        res = -EIO;                    
         LOG(ERROR) << "[Accessor]Flush, can't find opened path, file:" << key;
-    }
-    size_t realSize = 0;
-    if (SUCCESS == res) {
+        realSize = GetRealsize(key);
+    } else {
         realSize = ent->GetRealsize();
-        if (size < realSize) {
-            res = writeCache_->Truncate(key, size);
-        } else if (size > realSize) {
-            // fill write cache 
-            size_t fillSize = size - realSize;
-            std::unique_ptr<char[]> buf = std::make_unique<char[]>(fillSize);
-            res = writeCache_->Put(key, realSize, fillSize,
-                                   ByteBuffer(buf.get(), fillSize));
-        }
+    }
+
+    int res = SUCCESS;
+    if (size < realSize) {
+        res = writeCache_->Truncate(key, size);
+    } else if (size > realSize) {
+        // fill write cache
+        size_t fillSize = size - realSize;
+        std::unique_ptr<char[]> buf = std::make_unique<char[]>(fillSize);
+        res = writeCache_->Put(key, realSize, fillSize,
+                                ByteBuffer(buf.get(), fillSize));
     }
 
     if (SUCCESS == res && size != realSize) {
-        ent->TruncateRealsize(size);
+        if (nullptr != ent)
+            ent->TruncateRealsize(size);
+        TruncateRealsize(key, size);
     }
 
     fileLock->second->store(0);  // release exclusive lock
@@ -602,8 +615,7 @@ bool HybridCacheAccessor4S3fs::UseGlobalCache() {
     return cfg_.UseGlobalCache;
 }
 
-void HybridCacheAccessor4S3fs::BackGroundFlush() 
-{
+void HybridCacheAccessor4S3fs::BackGroundFlush() {
     LOG(WARNING) << "[Accessor]BackGroundFlush start";
     if (cfg_.EnableLinUCB || cfg_.EnableResize) {
         while(!toStop_.load(std::memory_order_acquire)) {
@@ -614,6 +626,8 @@ void HybridCacheAccessor4S3fs::BackGroundFlush()
             LOG(WARNING) << "[Accessor]BackGroundFlush radically, write pool ratio:"
                          << WritePoolRatio();
             FsSync();
+            LOG(WARNING) << "[Accessor]BackGroundFlush after FsSync, write cache ratio:"
+                         << WriteCacheRatio();
         }
         if (0 < writeCache_->GetCacheSize()) {
             FsSync();
@@ -627,6 +641,8 @@ void HybridCacheAccessor4S3fs::BackGroundFlush()
             LOG(WARNING) << "[Accessor]BackGroundFlush radically, write cache ratio:"
                          << WriteCacheRatio();
             FsSync();
+            LOG(WARNING) << "[Accessor]BackGroundFlush after FsSync, write cache ratio:"
+                         << WriteCacheRatio();
         }
         if (0 < writeCache_->GetCacheSize()) {
             FsSync();
@@ -837,4 +853,53 @@ void HybridCacheAccessor4S3fs::LinUCBClient() {
         // LOG(INFO) << "[LinUCB] " << butil::cpuwide_time_us();
     }
     LOG(WARNING) << "[LinUCB] LinUCBThread stop";
+}
+
+size_t HybridCacheAccessor4S3fs::GetRealsize(const std::string &key) const {
+    auto fileInfo = fileInfo_.find(key);
+    if (fileInfo_.end() != fileInfo) {
+        return static_cast<size_t>(fileInfo->second.realsize->load());
+    }
+    return 0;
+}
+
+void HybridCacheAccessor4S3fs::UpdateRealsize(const std::string &key, off_t size) {
+    if (size < 0) return;
+    auto fileInfo = fileInfo_.find(key);
+    if (fileInfo_.end() != fileInfo) {
+        while(true) {
+            size_t curSize = static_cast<size_t>(fileInfo->second.realsize->load());
+            if(curSize >= size) break;
+            if(fileInfo->second.realsize->compare_exchange_weak(curSize, size)) break;
+        }
+    } else {
+        FileInfo info;
+        info.realsize = std::make_shared<std::atomic<uint64_t>>(size);
+        fileInfo_.insert(key, info);
+    }
+}
+
+void HybridCacheAccessor4S3fs::TruncateRealsize(const std::string &key, off_t size) {
+    if (size < 0) return;
+    auto fileInfo = fileInfo_.find(key);
+    if (fileInfo_.end() != fileInfo) {
+        while(true) {
+            size_t curSize = static_cast<size_t>(fileInfo->second.realsize->load());
+            if(fileInfo->second.realsize->compare_exchange_weak(curSize, size)) break;
+        }
+    } else {
+        FileInfo info;
+        info.realsize = std::make_shared<std::atomic<uint64_t>>(size);
+        fileInfo_.insert(key, info);
+    }
+}
+
+void HybridCacheAccessor4S3fs::InitFileInfo(const std::string &key, off_t size,
+                                            const headers_t* meta) {
+    fileInfo_.erase(key);
+    FileInfo info;
+    info.realsize = std::make_shared<std::atomic<uint64_t>>(size);
+    if (meta)
+        info.orgmeta = *meta;
+    fileInfo_.insert(key, info);
 }
