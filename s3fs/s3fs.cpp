@@ -1042,6 +1042,10 @@ static int s3fs_getattr(const char* _path, struct stat* stbuf)
                 stbuf->st_size = tmpstbuf.st_size;
             }
         }
+        if(use_newcache){
+            size_t recordSize = accessor->GetRealsize(path);
+            stbuf->st_size = stbuf->st_size < recordSize ? recordSize : stbuf->st_size;
+        }
         if(0 == strcmp(path, "/")){
             stbuf->st_size = 4096;
         }
@@ -2953,7 +2957,7 @@ static int s3fs_read(const char* _path, char* buf, size_t size, off_t offset, st
     // check real file size
     off_t realsize = 0;
     if(!ent->GetSize(realsize) || 0 == realsize){
-        S3FS_PRN_DBG("file size is 0, so break to read.");
+        S3FS_PRN_WARN("file size is 0, so break to read.");
         return 0;
     }
 
@@ -6151,6 +6155,10 @@ int main(int argc, char* argv[])
     }
     fuse_opt_free_args(&custom_args);
 
+    if(use_newcache){
+        accessor.reset();
+    }
+
     // Destroy curl
     if(!S3fsCurl::DestroyS3fsCurl()){
         S3FS_PRN_WARN("Could not release curl library.");
@@ -6163,10 +6171,6 @@ int main(int argc, char* argv[])
     // cleanup xml2
     xmlCleanupParser();
     S3FS_MALLOCTRIM(0);
-
-    if(use_newcache){
-        accessor.reset();
-    }
 
     exit(fuse_res);
 }

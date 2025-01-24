@@ -158,6 +158,11 @@ class PageCacheImpl : public PageCache {
 
     Cache::WriteHandle FindOrCreateWriteHandle(const std::string &key);
 
+    void SharedLock();
+    void ReleaseSharedLock();
+    void ExclusiveLock();
+    void ReleaseExclusiveLock();
+
  private:
     std::shared_ptr<Cache> cache_;
     PoolId pool_;

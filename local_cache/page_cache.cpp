@@ -168,20 +168,11 @@ int PageCacheImpl::Read(const std::string &key,
     assert(cfg_.PageBodySize >= pagePos + length);
     assert(cache_);
 
-    /*
-     * It will coredump at facebook::cachelib::SlabHeader::isFlagSet in arm architecture.
-     * read & write need to avoid concurrency with delete
-     */
-    if (cfg_.SafeMode) {  // shared lock
-        while(true) {
-            int64_t lock = lock_.load();
-            if (lock >= 0 && lock_.compare_exchange_weak(lock, lock + 1))
-                break;
-        }
-    }
     int res = SUCCESS;
     while (true) {
+        SharedLock();
         auto readHandle = cache_->find(key);
+        ReleaseSharedLock();
         if (!readHandle) {
             res = PAGE_NOT_FOUND;
             break;
@@ -262,7 +253,6 @@ int PageCacheImpl::Read(const std::string &key,
         newVer = GetNewVer(pageValue);
         if (lastVer == newVer) break;
     }
-    if (cfg_.SafeMode) lock_.fetch_sub(1);  // release shared lock
     return res;
 }
 
@@ -273,7 +263,9 @@ int PageCacheImpl::GetAllCache(const std::string &key,
 
     int res = SUCCESS;
     while (true) {
+        SharedLock();
         auto readHandle = cache_->find(key);
+        ReleaseSharedLock();
         if (!readHandle) {
             res = PAGE_NOT_FOUND;
             break;
@@ -367,7 +359,9 @@ int PageCacheImpl::DeletePart(const std::string &key,
     Cache::WriteHandle writeHandle = nullptr;
     char* pageValue = nullptr;
     while (true) {
+        SharedLock();
         writeHandle = cache_->findToWrite(key);
+        ReleaseSharedLock();
         if (!writeHandle) {
             res = PAGE_NOT_FOUND;
             break;
@@ -392,15 +386,9 @@ int PageCacheImpl::DeletePart(const std::string &key,
 
         bool isDel = false;
         if (isEmpty) {
-            if (cfg_.SafeMode) {  // exclusive lock
-                while(true) {
-                    int64_t expected = 0;
-                    if (lock_.compare_exchange_weak(expected, -1))
-                        break;
-                }
-            }
+            ExclusiveLock();
             auto rr = cache_->remove(writeHandle);
-            if (cfg_.SafeMode) lock_.store(0);  // release exclusive lock
+            ReleaseExclusiveLock();
             if (rr == Cache::RemoveRes::kSuccess) {
                 pageNum_.fetch_sub(1);
                 pagesList_.erase(key);
@@ -420,15 +408,9 @@ int PageCacheImpl::DeletePart(const std::string &key,
 
 int PageCacheImpl::Delete(const std::string &key) {
     assert(cache_);
-    if (cfg_.SafeMode) {  // exclusive lock
-        while(true) {
-            int64_t expected = 0;
-            if (lock_.compare_exchange_weak(expected, -1))
-                break;
-        }
-    }
+    ExclusiveLock();
     int res = cache_->remove(key) == Cache::RemoveRes::kSuccess ? SUCCESS : PAGE_NOT_FOUND;
-    if (cfg_.SafeMode) lock_.store(0);  // release exclusive lock
+    ReleaseExclusiveLock();
     if (SUCCESS == res) {
         pageNum_.fetch_sub(1);
         pagesList_.erase(key);
@@ -437,41 +419,70 @@ int PageCacheImpl::Delete(const std::string &key) {
 }
 
 Cache::WriteHandle PageCacheImpl::FindOrCreateWriteHandle(const std::string &key) {
+    SharedLock();
     auto writeHandle = cache_->findToWrite(key);
+    ReleaseSharedLock();
     if (!writeHandle) {
-        if (cfg_.SafeMode) {  // shared lock
-            while(true) {
-                int64_t lock = lock_.load();
-                if (lock >= 0 && lock_.compare_exchange_weak(lock, lock + 1))
-                    break;
-            }
-        }
+        ExclusiveLock();
         writeHandle = cache_->allocate(pool_, key, GetRealPageSize());
-        if (cfg_.SafeMode) lock_.fetch_sub(1);  // release shared lock
 
         assert(writeHandle);
         assert(writeHandle->getMemory());
         // need init
         memset(writeHandle->getMemory(), 0, cfg_.PageMetaSize + bitmapSize_);
 
+        bool addNew = false;
         if (cfg_.CacheLibCfg.EnableNvmCache) {
             // insertOrReplace will insert or replace existing item for the key,
             // and return the handle of the replaced old item
             // Note: write cache nonsupport NVM, because it will be replaced
-            if (!cache_->insertOrReplace(writeHandle)) {
-                pageNum_.fetch_add(1);
-                pagesList_.insert(key);
-            }
+            if (!cache_->insertOrReplace(writeHandle))
+                addNew = true;
         } else {
-            if (cache_->insert(writeHandle)) {
-                pageNum_.fetch_add(1);
-                pagesList_.insert(key);
-            } else {
+            if (cache_->insert(writeHandle))
+                addNew = true;
+            else
                 writeHandle = cache_->findToWrite(key);
-            }
+        }
+        ReleaseExclusiveLock();
+        if (addNew) {
+            pageNum_.fetch_add(1);
+            pagesList_.insert(key);
         }
     }
     return writeHandle;
+}
+
+void PageCacheImpl::SharedLock() {
+    if (!cfg_.SafeMode)
+        return;
+    while(true) {
+        int64_t lock = lock_.load();
+        if (lock >= 0 && lock_.compare_exchange_weak(lock, lock + 1))
+            break;
+    }
+}
+
+void PageCacheImpl::ReleaseSharedLock() {
+    if (!cfg_.SafeMode)
+        return;
+    lock_.fetch_sub(1);
+}
+
+void PageCacheImpl::ExclusiveLock() {
+    if (!cfg_.SafeMode)
+        return;
+    while(true) {
+        int64_t expected = 0;
+        if (lock_.compare_exchange_weak(expected, -1))
+            break;
+    }
+}
+
+void PageCacheImpl::ReleaseExclusiveLock() {
+    if (!cfg_.SafeMode)
+        return;
+    lock_.store(0);
 }
 
 }  // namespace HybridCache

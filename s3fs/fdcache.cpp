@@ -625,15 +625,20 @@ FdEntity* FdManager::Open(int& fd, const char* path, const headers_t* pmeta, off
         }
         // make new obj
         std::unique_ptr<FdEntity> ent(new FdEntity(path, cache_path.c_str()));
+        size_t realSize = size;
+        if(use_newcache){
+            size_t recordSize = accessor->GetRealsize(path);
+            realSize = realSize < recordSize ? recordSize : realSize;
+        }
         // open
-        if(0 > (fd = ent->Open(pmeta, size, ts_mctime, flags, type))){
+        if(0 > (fd = ent->Open(pmeta, realSize, ts_mctime, flags, type))){
             S3FS_PRN_ERR("failed to open and create new pseudo fd for path(%s) errno:%d.", path, fd);
             return nullptr;
         }
 
         if(use_newcache){
-            ent->UpdateRealsize(size);
-            accessor->InitFileInfo(path, size, pmeta);
+            ent->UpdateRealsize(realSize);
+            accessor->InitFileInfo(path, realSize, pmeta);
         }
 
         if(!cache_path.empty()){

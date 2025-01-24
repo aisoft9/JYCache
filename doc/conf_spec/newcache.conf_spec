@@ -41,3 +41,4 @@ FlushToRead             # 文件flush完成后是否写入读缓存
 CleanCacheByOpen        # 文件open时是否清理读缓存
 EnableResize            # 是否开启普通的Resize策略
 EnableLinUCB            # 是否开启LinUCB
+BlockUserFlush          # 是否阻塞用户发起的flush操作，此项不会影响后台异步批量flush

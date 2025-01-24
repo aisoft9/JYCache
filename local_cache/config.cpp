@@ -97,6 +97,7 @@ bool GetHybridCacheConfig(const std::string& file, HybridCacheConfig& cfg) {
     conf.GetValueFatalIfFail("EnableLog", cfg.EnableLog);
     conf.GetValueFatalIfFail("FlushToRead", cfg.FlushToRead);
     conf.GetValueFatalIfFail("CleanCacheByOpen", cfg.CleanCacheByOpen);
+    conf.GetValueFatalIfFail("BlockUserFlush", cfg.BlockUserFlush);
     // add by tqy
     conf.GetValueFatalIfFail("EnableResize", cfg.EnableResize);
     conf.GetValueFatalIfFail("EnableLinUCB", cfg.EnableLinUCB);

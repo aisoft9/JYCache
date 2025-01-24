@@ -80,6 +80,7 @@ class HybridCacheAccessor4S3fs : public HybridCache::HybridCacheAccessor {
     bool IsWritePoolFull(size_t len);
     uint32_t WritePoolRatio();
     void BackGroundFlush();
+    int RealFlush(const std::string &key, bool force);
 
  private:
     folly::ConcurrentHashMap<std::string, atomic_ptr_t> fileLock_;  // rwlock. write and flush are exclusive

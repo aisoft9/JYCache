@@ -2815,7 +2815,10 @@ bool FdEntity::ReplaceLastUpdateUntreatedPart(off_t front_start, off_t front_siz
 
 size_t FdEntity::GetRealsize() const
 {
-    return static_cast<size_t>(realsize.load());
+    size_t size = static_cast<size_t>(realsize.load());
+    size_t recordSize = accessor->GetRealsize(path);
+    size = size < recordSize ? recordSize : size;
+    return size;
 }
 
 void FdEntity::UpdateRealsize(off_t size)

@@ -62,6 +62,7 @@ struct HybridCacheConfig {
     bool            UseGlobalCache = false;
     bool            FlushToRead = false;  // write to read cache after flush
     bool            CleanCacheByOpen = false;  // clean read cache when open file
+    bool            BlockUserFlush = false;  // block user flush operation
     // added by tqy
     bool            EnableResize;  // 是否开启普通的Resize策略
     bool            EnableLinUCB;  // 是否开启LinUCB

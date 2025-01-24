@@ -264,6 +264,10 @@ int HybridCacheAccessor4S3fs::Get(const std::string &key, size_t start,
 }
 
 int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
+    return RealFlush(key, false);
+}
+ 
+int HybridCacheAccessor4S3fs::RealFlush(const std::string &key, bool force) {
     std::chrono::steady_clock::time_point startTime;
     if (EnableLogging) {
         startTime = std::chrono::steady_clock::now();
@@ -312,6 +316,18 @@ int HybridCacheAccessor4S3fs::Flush(const std::string &key) {
         for (auto &it : ent->GetOriginalHeaders()) {
             realHeaders[it.first] = it.second;
         }
+    }
+
+    // block user flush operation
+    if (cfg_.BlockUserFlush && realSize > 0 && !force) {
+        fileLock->second->store(0);
+        if (EnableLogging) {
+            double totalTime = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - startTime).count();
+            LOG(INFO) << "[Accessor]Flush skip, key:" << key << ", size:" << realSize
+                      << ", time:" << totalTime << "ms";
+        }
+        return SUCCESS;
     }
 
     int res = SUCCESS;
@@ -501,7 +517,7 @@ int HybridCacheAccessor4S3fs::Truncate(const std::string &key, size_t size) {
     FdEntity* ent = nullptr;
     if (nullptr == (ent = FdManager::get()->GetFdEntity(key.c_str(), fd,
                 false, AutoLock::ALREADY_LOCKED))) {
-        LOG(ERROR) << "[Accessor]Flush, can't find opened path, file:" << key;
+        LOG(ERROR) << "[Accessor]Truncate, can't find opened path, file:" << key;
         realSize = GetRealsize(key);
     } else {
         realSize = ent->GetRealsize();
@@ -590,7 +606,7 @@ int HybridCacheAccessor4S3fs::FsSync() {
     for (auto& file : filesVec) {
         std::string key = file.first;
         fs.emplace_back(folly::via(executor_.get(), [this, key]() {
-            int res = this->Flush(key);
+            int res = this->RealFlush(key, true);
             if (res) {
                 LOG(ERROR) << "[Accessor]FsSync, flush error in FsSync, file:" << key
                            << ", res:" << res;
