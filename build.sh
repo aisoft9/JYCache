@@ -11,13 +11,13 @@ if [ ! -d "./thirdparties" ]; then
             tar -zxvf JYCache_Dendepency_x64.tgz
         ;;
         aarch64)
-            wget https://madstorage.s3.cn-north-1.jdcloud-oss.com/JYCache_Dendepency_arm64.tgz
-            md5=`md5sum JYCache_Dendepency_arm64.tgz | awk {'print $1'}`
-            if [ "$md5" != "5c90ddd6b0849336adeccbdadf42f065" ]; then
+            wget https://madstorage.s3.cn-north-1.jdcloud-oss.com/JYCache_Dendepency_arm64_v1.0.1.tgz
+            md5=`md5sum JYCache_Dendepency_arm64_v1.0.1.tgz | awk {'print $1'}`
+            if [ "$md5" != "1de6694d30a5113bed34de7a8e2abe70" ]; then
                 echo 'JYCache_Dendepency version inconsistency!'
                 exit 1
             fi
-            tar -zxvf JYCache_Dendepency_arm64.tgz
+            tar -zxvf JYCache_Dendepency_arm64_v1.0.1.tgz
         ;;
     esac
 fi
