@@ -1,4 +1,4 @@
-# JYCache, powered by 9#AISoft
+# JYCache v1.1.0, powered by 9#AISoft
 
 [中文说明](README.zh.md)
 
