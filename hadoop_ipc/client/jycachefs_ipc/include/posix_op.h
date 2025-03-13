@@ -35,7 +35,6 @@ bool ShouldInterceptSyscall(const struct syscall_desc* desc, const long* args);
 
 void InitSyscall();
 
-const struct syscall_desc* GetSyscallDesc(long syscallNumber, const long args[6]);
 
 bool StartsWithMountPath(const char* str);
 
@@ -486,6 +485,8 @@ int PosixOpTruncate(const long* args, long *result);
  * the error type.
  */
 int PosixOpFtruncate(const long* args, long *result);
+
+int ThreadInit();
 
 #ifdef __cplusplus
 }  // extern "C"

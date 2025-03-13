@@ -27,8 +27,8 @@ build_jni_library() {
         --config=gcc7-later \
         --compilation_mode=opt \
         --copt -g \
-         --copt -fPIC \
         --copt -fvisibility=hidden \
+        --copt -fPIC \
         --copt -DUNINSTALL_SIGSEGV=1 \
         --copt -DCLIENT_CONF_PATH="\"${g_root}/jycachefs/conf/client.conf\"" \
         --action_env=BAZEL_LINKLIBS='-l%:libstdc++.a' \

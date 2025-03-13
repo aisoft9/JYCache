@@ -224,7 +224,6 @@ static inline int fixup_attr_mask(jint jmask) {
     do { \
         jclass ecls = env->FindClass(exception_name); \
         if (ecls) { \
-            printf("ecls not null\n"); \
             int ret = env->ThrowNew(ecls, message); \
             if (ret < 0) { \
                 printf("(JYCacheFS) Fatal Error\n"); \

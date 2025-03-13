@@ -112,7 +112,7 @@ __attribute__((visibility("default")))
 int jycachefs_listdir(uintptr_t instance_ptr, const char* path, dirent_t* dirent, int *dir_num);
 
 __attribute__((visibility("default")))
-int jycachefs_getdents64(int fd, struct dirent_t *dirs, size_t max_count);
+int jycachefs_getdents64(uintptr_t instance_ptr, int fd, dirent_t *dirs, size_t max_count);
 
 // file
 __attribute__((visibility("default")))

@@ -62,6 +62,12 @@ int posix_s3fs_closedir(S3DirStream* dirstream);
 
 int posix_s3fs_unlink(const char* _path);
 
+int posix_s3fs_rmdir(const char* _path);
+
+int posix_s3fs_rename(const char* _from, const char* _to);
+
+void s3fs_stop();
+
 #ifdef __cplusplus
 }
 #endif

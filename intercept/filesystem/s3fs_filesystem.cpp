@@ -180,8 +180,9 @@ int S3fsFileSystem::Rmdir(const char* path) {
 }
 
 int S3fsFileSystem::Rename(const char* from, const char* to) {
-    std::cout << "S3fsFileSystem::Rename: " << from << " to " << to << std::endl;
-    return 0;
+    int ret = posix_s3fs_rename(from, to);
+    spdlog::info("S3fsFileSystem::Rename, from {}, to {}, ret: {}", from, to, ret);
+    return ret;
 }
 
 int S3fsFileSystem::Link(const char* oldpath, const char* newpath) {

@@ -25,7 +25,7 @@ namespace common {
 #ifndef CLIENT_BUILD
 const std::string CONFIG_FILE = "conf/server.conf";
 #else
-const std::string CONFIG_FILE = "conf/client.conf";
+const std::string CONFIG_FILE = "/opt/jycachefs/conf/client.conf";
 #endif
 
 using Ino = uint64_t;

@@ -9,7 +9,7 @@
 ### 前置要求
 
 1. 已经获取到此项目的发行包：jycachefs-hadoop-1.0-SNAPSHOT.jar
-2. 已经部署并启动JYCacheFS，挂载路径：/home/jycachefs/mnt/
+2. 已经部署并启动JYCacheFS，挂载路径：/opt/jycachefs/mnt/
 
 ### 安装
 

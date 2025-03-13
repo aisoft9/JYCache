@@ -105,7 +105,7 @@ int jycachefs_mount(uintptr_t instance_ptr,
 //    auto rc = mount->vfs->Mount(fsname, mountpoint);
 //    return SysErr(rc);
     printf("mount %s, mountpoint: %s\n", fsname, mount_point);
-    const char *default_mountpoint = "/home/jycachefs/mnt/";
+    const char *default_mountpoint = "/opt/jycachefs/mnt/";
     strcpy(sg_mountpoint, default_mountpoint);
     sg_mountpoint_len = strlen(sg_mountpoint);
     printf("mount %s end, mountpoint: %s, len: %d\n", fsname, sg_mountpoint, sg_mountpoint_len);

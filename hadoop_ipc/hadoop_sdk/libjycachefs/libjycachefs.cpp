@@ -36,7 +36,7 @@
 #include <sys/syscall.h>
 
 #include "hadoop_sdk/libjycachefs/libjycachefs.h"
-#include "jycachefs_rpc/include/posix_op.h"
+#include "jycachefs_ipc/include/posix_op.h"
 
 //using ::jycachefs::client::filesystem::JYCACHEFS_ERROR;
 //using ::jycachefs::client::filesystem::SysErr;
@@ -51,10 +51,17 @@
 
 #define SYSCALL_ARGS_NUM 6
 
-static get_intercept_path(const char *path, char *intercept_path, size_t dest_max_len){
-    const char *intercept_prefix = "/testdir/";
+static void get_intercept_path(const char *path, char *intercept_path, size_t dest_max_len){
+    const char *intercept_prefix = "/testdir";
+    
+    if (strncmp(path, intercept_prefix, strlen(intercept_prefix)) == 0){
+        strncpy(intercept_path, path, dest_max_len);
+        return;
+    }
+
     strncpy(intercept_path, intercept_prefix, dest_max_len);
     strncat(intercept_path, path, dest_max_len);
+    return;
 }
 
 uintptr_t jycachefs_create() {
@@ -78,6 +85,7 @@ int jycachefs_mount(uintptr_t instance_ptr,
                   const char* fsname,
                   const char* mount_point) {
     printf("mount %s, mountpoint: %s\n", fsname, mount_point);
+    ThreadInit();
     printf("mount %s end, mountpoint: %s\n", fsname, mount_point);
     return 0;
 }
@@ -161,15 +169,16 @@ int jycachefs_rmdir(uintptr_t instance_ptr, const char* path) {
     long result = 0;
     char intercept_path[PATH_MAX];
     get_intercept_path(path, intercept_path, sizeof(intercept_path) - 1);
-    args[0] = (long) intercept_path;
-
-    PosixOpRmdir(args, &result);
-
+    
+    args[0] = -1;
+    args[1] = (long) intercept_path;
+    args[2] = (long) AT_REMOVEDIR;
+    PosixOpUnlinkat(args, &result);
     printf("rmdir %s => %s, ret: %d\n", path, intercept_path, (int)result);
-    return ret;
+    return (int)result;
 }
 
-int jycachefs_getdents64(uintptr_t instance_ptr, int fd, struct dirent_t *dirs, size_t max_count) {
+int jycachefs_getdents64(uintptr_t instance_ptr, int fd, dirent_t *dirs, size_t max_count) {
     printf("getdents64 %d\n", fd);
 
     const size_t max_read_count = 1024;
@@ -208,6 +217,7 @@ int jycachefs_getdents64(uintptr_t instance_ptr, int fd, struct dirent_t *dirs, 
         dirent64 *src_dir = (dirent64 *)(read_dirs + pos);
         dirent_t *dest_dir = dirs + dir_num;
         strncpy(dest_dir->name, src_dir->d_name, sizeof (dest_dir->name));
+        printf("getdents64 %d, read: %s\n", fd, dest_dir->name);
         dest_dir->stat.st_ino = src_dir->d_ino;
         pos += src_dir->d_reclen;
         dir_num += 1;
@@ -270,7 +280,7 @@ ssize_t jycachefs_read(uintptr_t instance_ptr,
                      int fd,
                      char* buffer,
                      size_t count) {
-    printf("read %d, count: %lld\n", fd, (long long int)count);
+    // printf("read %d, count: %lld\n", fd, (long long int)count);
 
     long args[SYSCALL_ARGS_NUM] = {0};
     long result = 0;
@@ -279,16 +289,16 @@ ssize_t jycachefs_read(uintptr_t instance_ptr,
     args[2] = (long) count;
 
     PosixOpRead(args, &result);
-    printf("read %d, ret: %lld\n", fd, (long long int)result);
+    // printf("read %d, ret: %lld\n", fd, (long long int)result);
 
-    return (ssize_t)ret;
+    return (ssize_t)result;
 }
 
 ssize_t jycachefs_write(uintptr_t instance_ptr,
                       int fd,
                       char* buffer,
                       size_t count) {
-    printf("write %d, count: %lld\n", fd, (long long int)count);
+    // printf("write %d, count: %lld\n", fd, (long long int)count);
 
     long args[SYSCALL_ARGS_NUM] = {0};
     long result = 0;
@@ -298,7 +308,7 @@ ssize_t jycachefs_write(uintptr_t instance_ptr,
     args[2] = (long) count;
 
     PosixOpWrite(args, &result);
-    printf("write: %d, ret: %lld\n", fd, (long long int)result);
+    // printf("write: %d, ret: %lld\n", fd, (long long int)result);
 
     return (ssize_t)result;
 }
@@ -311,7 +321,7 @@ int jycachefs_fsync(uintptr_t instance_ptr, int fd) {
 
     args[0] = (long) fd;
 
-    PosixOpFsync(fd, &result);
+    PosixOpFsync(args, &result);
     printf("fsync %d, ret: %ld\n", fd, result);
 
     return (int) result;
@@ -377,7 +387,7 @@ int jycachefs_lstat(uintptr_t instance_ptr, const char* path, struct stat* file_
     args[0] = (long) intercept_path;
     args[1] = (long) file_stat;
 
-    PosixOpLstat(args, &result)
+    PosixOpLstat(args, &result);
     printf("lstat %s => %s, ret: %ld\n", path, intercept_path, result);
 
     return (int)-result;

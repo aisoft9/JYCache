@@ -1,10 +1,10 @@
 cc_library(
-    name = "jycachefs_rpc_lib",
+    name = "jycachefs_ipc_lib",
     srcs = glob([
-        "jycachefs_rpc/lib/libs3fs_lib.so",
+        "jycachefs_ipc/lib/libintercept_posix_interface_client.so",
     ]),
     hdrs = glob([
-        "jycachefs_rpc/include/s3fs_lib.h",
+        "jycachefs_ipc/include/posix_op.h",
     ]),
     visibility = [
         "//visibility:public"

@@ -44,6 +44,6 @@ cc_library(
     copts = JYCACHE_DEFAULT_COPTS,
     visibility = ["//visibility:public"],
     deps = [
-        "@client//:jycachefs_rpc_lib"
+        "@client//:jycachefs_ipc_lib"
     ],
 )

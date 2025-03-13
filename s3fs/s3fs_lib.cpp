@@ -339,6 +339,155 @@ static bool IS_CREATE_MP_STAT(const char* path)
     return (path && 0 == strcmp(path, "/") && !pHasMpStat->Get());
 }
 
+static bool is_special_name_folder_object(const char* path)
+{
+    if(!support_compat_dir){
+        // s3fs does not support compatibility directory type("_$folder$" etc) now,
+        // thus always returns false.
+        return false;
+    }
+
+    if(!path || '\0' == path[0]){
+        return false;
+    }
+    if(0 == strcmp(path, "/") && mount_prefix.empty()){
+        // the path is the mount point which is the bucket root
+        return false;
+    }
+
+    std::string strpath = path;
+    headers_t header;
+
+    if(std::string::npos == strpath.find("_$folder$", 0)){
+        if('/' == *strpath.rbegin()){
+            strpath.erase(strpath.length() - 1);
+        }
+        strpath += "_$folder$";
+    }
+    S3fsCurl s3fscurl;
+    if(0 != s3fscurl.HeadRequest(strpath.c_str(), header)){
+        return false;
+    }
+    header.clear();
+    S3FS_MALLOCTRIM(0);
+    return true;
+}
+
+static int chk_dir_object_type(const char* path, std::string& newpath, std::string& nowpath, std::string& nowcache, headers_t* pmeta, dirtype* pDirType)
+{
+    dirtype TypeTmp = dirtype::UNKNOWN;
+    int  result  = -1;
+    bool isforce = false;
+    dirtype* pType = pDirType ? pDirType : &TypeTmp;
+
+    // Normalize new path.
+    newpath = path;
+    if('/' != *newpath.rbegin()){
+        std::string::size_type Pos;
+        if(std::string::npos != (Pos = newpath.find("_$folder$", 0))){
+            newpath.erase(Pos);
+        }
+        newpath += "/";
+    }
+
+    // Always check "dir/" at first.
+    if(0 == (result = get_object_attribute(newpath.c_str(), nullptr, pmeta, false, &isforce))){
+        // Found "dir/" cache --> Check for "_$folder$", "no dir object"
+        nowcache = newpath;
+        if(is_special_name_folder_object(newpath.c_str())){     // check support_compat_dir in this function
+            // "_$folder$" type.
+            (*pType) = dirtype::FOLDER;
+            nowpath.erase(newpath.length() - 1);
+            nowpath += "_$folder$"; // cut and add
+        }else if(isforce){
+            // "no dir object" type.
+            (*pType) = dirtype::NOOBJ;
+            nowpath  = "";
+        }else{
+            nowpath = newpath;
+            if(!nowpath.empty() && '/' == *nowpath.rbegin()){
+                // "dir/" type
+                (*pType) = dirtype::NEW;
+            }else{
+                // "dir" type
+                (*pType) = dirtype::OLD;
+            }
+        }
+    }else if(support_compat_dir){
+        // Check "dir" when support_compat_dir is enabled
+        nowpath.erase(newpath.length() - 1);
+        if(0 == (result = get_object_attribute(nowpath.c_str(), nullptr, pmeta, false, &isforce))){
+            // Found "dir" cache --> this case is only "dir" type.
+            // Because, if object is "_$folder$" or "no dir object", the cache is "dir/" type.
+            // (But "no dir object" is checked here.)
+            nowcache = nowpath;
+            if(isforce){
+                (*pType) = dirtype::NOOBJ;
+                nowpath  = "";
+            }else{
+                (*pType) = dirtype::OLD;
+            }
+        }else{
+            // Not found cache --> check for "_$folder$" and "no dir object".
+            // (come here is that support_compat_dir is enabled)
+            nowcache = "";  // This case is no cache.
+            nowpath += "_$folder$";
+            if(is_special_name_folder_object(nowpath.c_str())){
+                // "_$folder$" type.
+                (*pType) = dirtype::FOLDER;
+                result   = 0;             // result is OK.
+            }else if(-ENOTEMPTY == directory_empty(newpath.c_str())){
+                // "no dir object" type.
+                (*pType) = dirtype::NOOBJ;
+                nowpath  = "";            // now path.
+                result   = 0;             // result is OK.
+            }else{
+                // Error: Unknown type.
+                (*pType) = dirtype::UNKNOWN;
+                newpath = "";
+                nowpath = "";
+            }
+        }
+    }
+    return result;
+}
+
+static int get_local_fent(AutoFdEntity& autoent, FdEntity **entity, const char* path, int flags, bool is_load)
+{
+    int         result;
+    struct stat stobj;
+    FdEntity*   ent;
+    headers_t   meta;
+
+    S3FS_PRN_INFO2("[path=%s]", path);
+
+    if(0 != (result = get_object_attribute(path, &stobj, &meta))){
+        return result;
+    }
+
+    // open
+    struct timespec st_mctime;
+    if(!S_ISREG(stobj.st_mode) && !S_ISLNK(stobj.st_mode)){
+        st_mctime = S3FS_OMIT_TS;
+    }else{
+        set_stat_to_timespec(stobj, stat_time_type::MTIME, st_mctime);
+    }
+    bool   force_tmpfile = S_ISREG(stobj.st_mode) ? false : true;
+
+    if(nullptr == (ent = autoent.Open(path, &meta, stobj.st_size, st_mctime, flags, force_tmpfile, true, false, AutoLock::NONE))){
+        S3FS_PRN_ERR("Could not open file. errno(%d)", errno);
+        return -EIO;
+    }
+    // load
+    if(is_load && !ent->LoadAll(autoent.GetPseudoFd(), &meta)){
+        S3FS_PRN_ERR("Could not load file. errno(%d)", errno);
+        autoent.Close();
+        return -EIO;
+    }
+    *entity = ent;
+    return 0;
+}
+
 int put_headers(const char* path, headers_t& meta, bool is_copy, bool use_st_size)
 {
     int         result;
@@ -2455,6 +2604,7 @@ int posix_s3fs_getdents(S3DirStream* dirstream, char* contents, size_t maxread, 
     }
 
     if(head.IsEmpty()){
+        *realbytes = 0;
         return 0;
     }
 
@@ -2506,6 +2656,498 @@ int posix_s3fs_unlink(const char* _path)
         S3FS_PRN_ERR("succeed to remove the file(%s), but could not update timestamp of its parent directory(result=%d).", path, update_result);
     }
     S3FS_MALLOCTRIM(0);
+    return result;
+}
+
+
+int posix_s3fs_rmdir(const char* _path)
+{
+    WTF8_ENCODE(path)
+    int result;
+    std::string strpath;
+    struct stat stbuf;
+
+    S3FS_PRN_INFO("[path=%s]", path);
+
+    if(0 != (result = check_parent_object_access(path, W_OK | X_OK))){
+        return result;
+    }
+
+    // directory must be empty
+    if(directory_empty(path) != 0){
+        return -ENOTEMPTY;
+    }
+
+    strpath = path;
+    if('/' != *strpath.rbegin()){
+        strpath += "/";
+    }
+    S3fsCurl s3fscurl;
+    result = s3fscurl.DeleteRequest(strpath.c_str());
+    s3fscurl.DestroyCurlHandle();
+    StatCache::getStatCacheData()->DelStat(strpath.c_str());
+
+    // double check for old version(before 1.63)
+    // The old version makes "dir" object, newer version makes "dir/".
+    // A case, there is only "dir", the first removing object is "dir/".
+    // Then "dir/" is not exists, but curl_delete returns 0.
+    // So need to check "dir" and should be removed it.
+    if('/' == *strpath.rbegin()){
+        strpath.erase(strpath.length() - 1);
+    }
+    if(0 == get_object_attribute(strpath.c_str(), &stbuf, nullptr, false)){
+        if(S_ISDIR(stbuf.st_mode)){
+            // Found "dir" object.
+            result = s3fscurl.DeleteRequest(strpath.c_str());
+            s3fscurl.DestroyCurlHandle();
+            StatCache::getStatCacheData()->DelStat(strpath.c_str());
+        }
+    }
+    // If there is no "dir" and "dir/" object(this case is made by s3cmd/s3sync),
+    // the cache key is "dir/". So we get error only once(delete "dir/").
+
+    // check for "_$folder$" object.
+    // This processing is necessary for other S3 clients compatibility.
+    if(is_special_name_folder_object(strpath.c_str())){
+        strpath += "_$folder$";
+        result   = s3fscurl.DeleteRequest(strpath.c_str());
+    }
+
+    // update parent directory timestamp
+    int update_result;
+    if(0 != (update_result = update_mctime_parent_directory(path))){
+        S3FS_PRN_ERR("succeed to remove the directory(%s), but could not update timestamp of its parent directory(result=%d).", path, update_result);
+    }
+
+    S3FS_MALLOCTRIM(0);
+
+    return result;
+}
+
+static int rename_object(const char* from, const char* to, bool update_ctime)
+{
+    int         result;
+    headers_t   meta;
+    struct stat buf;
+
+    S3FS_PRN_INFO1("[from=%s][to=%s]", from , to);
+
+    if(0 != (result = check_parent_object_access(to, W_OK | X_OK))){
+        // not permit writing "to" object parent dir.
+        return result;
+    }
+    if(0 != (result = check_parent_object_access(from, W_OK | X_OK))){
+        // not permit removing "from" object parent dir.
+        return result;
+    }
+    if(0 != (result = get_object_attribute(from, &buf, &meta))){
+        return result;
+    }
+
+    std::string strSourcePath        = (mount_prefix.empty() && 0 == strcmp("/", from)) ? "//" : from;
+
+    if(update_ctime){
+        meta["x-amz-meta-ctime"]     = s3fs_str_realtime();
+    }
+    meta["x-amz-copy-source"]        = urlEncodePath(service_path + S3fsCred::GetBucket() + get_realpath(strSourcePath.c_str()));
+    meta["Content-Type"]             = S3fsCurl::LookupMimeType(to);
+    meta["x-amz-metadata-directive"] = "REPLACE";
+
+    std::string xattrvalue;
+    if(get_meta_xattr_value(from, xattrvalue)){
+        S3FS_PRN_DBG("Set xattrs = %s", urlDecode(xattrvalue).c_str());
+        meta["x-amz-meta-xattr"] = xattrvalue;
+    }
+
+    // [NOTE]
+    // If it has a cache, open it first and leave it open until rename.
+    // The cache is renamed after put_header, because it must be open
+    // at the time of renaming.
+    {
+        // update time
+        AutoFdEntity autoent;
+        FdEntity*    ent;
+        if(nullptr == (ent = autoent.OpenExistFdEntity(from))){
+            // no opened fd
+
+            // get mtime/ctime/atime from meta
+            struct timespec mtime = get_mtime(meta);
+            struct timespec ctime = get_ctime(meta);
+            struct timespec atime = get_atime(meta);
+            if(mtime.tv_sec < 0){
+                mtime.tv_sec = 0L;
+                mtime.tv_nsec = 0L;
+            }
+            if(ctime.tv_sec < 0){
+                ctime.tv_sec = 0L;
+                ctime.tv_nsec = 0L;
+            }
+            if(atime.tv_sec < 0){
+                atime.tv_sec = 0L;
+                atime.tv_nsec = 0L;
+            }
+
+            if(FdManager::IsCacheDir()){
+                // create cache file if be needed
+                //
+                // [NOTE]
+                // Do not specify "S3FS_OMIT_TS" for mctime parameter.
+                // This is because if the cache file does not exist, the pagelist for it
+                // will be recreated, but the entire file area indicated by this pagelist
+                // will be in the "modified" state.
+                // This does not affect the rename process, but the cache information in
+                // the "modified" state remains, making it impossible to read the file correctly.
+                //
+                ent = autoent.Open(from, &meta, buf.st_size, mtime, O_RDONLY, false, true, false, AutoLock::NONE);
+            }
+            if(ent){
+                ent->SetMCtime(mtime, ctime);
+                ent->SetAtime(atime);
+            }
+        }
+
+        // copy
+        if(0 != (result = put_headers(to, meta, true, /* use_st_size= */ false))){
+            return result;
+        }
+
+        // rename
+        FdManager::get()->Rename(from, to);
+    }
+
+    // Remove file
+    result = posix_s3fs_unlink(from);
+
+    StatCache::getStatCacheData()->DelStat(to);
+
+    return result;
+}
+
+static int rename_object_nocopy(const char* from, const char* to, bool update_ctime)
+{
+    int result;
+
+    S3FS_PRN_INFO1("[from=%s][to=%s]", from , to);
+
+    if(0 != (result = check_parent_object_access(to, W_OK | X_OK))){
+        // not permit writing "to" object parent dir.
+        return result;
+    }
+    if(0 != (result = check_parent_object_access(from, W_OK | X_OK))){
+        // not permit removing "from" object parent dir.
+        return result;
+    }
+
+    // open & load
+    {   // scope for AutoFdEntity
+        AutoFdEntity autoent;
+        FdEntity*    ent;
+        if(0 != (result = get_local_fent(autoent, &ent, from, O_RDWR, true))){
+            S3FS_PRN_ERR("could not open and read file(%s)", from);
+            return result;
+        }
+
+        // Set header
+        if(!ent->SetContentType(to)){
+            S3FS_PRN_ERR("could not set content-type for %s", to);
+            return -EIO;
+        }
+
+        // update ctime
+        if(update_ctime){
+            struct timespec ts;
+            s3fs_realtime(ts);
+            ent->SetCtime(ts);
+        }
+
+        // upload
+        if(0 != (result = ent->RowFlush(autoent.GetPseudoFd(), to, AutoLock::NONE, true))){
+            S3FS_PRN_ERR("could not upload file(%s): result=%d", to, result);
+            return result;
+        }
+        FdManager::get()->Rename(from, to);
+    }
+
+    // Remove file
+    result = posix_s3fs_unlink(from);
+
+    // Stats
+    StatCache::getStatCacheData()->DelStat(to);
+
+    return result;
+}
+
+static int rename_large_object(const char* from, const char* to)
+{
+    int         result;
+    struct stat buf;
+    headers_t   meta;
+
+    S3FS_PRN_INFO1("[from=%s][to=%s]", from , to);
+
+    if(0 != (result = check_parent_object_access(to, W_OK | X_OK))){
+        // not permit writing "to" object parent dir.
+        return result;
+    }
+    if(0 != (result = check_parent_object_access(from, W_OK | X_OK))){
+        // not permit removing "from" object parent dir.
+        return result;
+    }
+    if(0 != (result = get_object_attribute(from, &buf, &meta, false))){
+        return result;
+    }
+
+    S3fsCurl s3fscurl(true);
+    if(0 != (result = s3fscurl.MultipartRenameRequest(from, to, meta, buf.st_size))){
+        return result;
+    }
+    s3fscurl.DestroyCurlHandle();
+
+    // Rename cache file
+    FdManager::get()->Rename(from, to);
+
+    // Remove file
+    result = posix_s3fs_unlink(from);
+
+    // Stats
+    StatCache::getStatCacheData()->DelStat(to);
+
+    return result;
+}
+
+static int clone_directory_object(const char* from, const char* to, bool update_ctime, const char* pxattrvalue)
+{
+    int result = -1;
+    struct stat stbuf;
+
+    S3FS_PRN_INFO1("[from=%s][to=%s]", from, to);
+
+    // get target's attributes
+    if(0 != (result = get_object_attribute(from, &stbuf))){
+        return result;
+    }
+
+    struct timespec ts_atime;
+    struct timespec ts_mtime;
+    struct timespec ts_ctime;
+    set_stat_to_timespec(stbuf, stat_time_type::ATIME, ts_atime);
+    set_stat_to_timespec(stbuf, stat_time_type::MTIME, ts_mtime);
+    if(update_ctime){
+        s3fs_realtime(ts_ctime);
+    }else{
+        set_stat_to_timespec(stbuf, stat_time_type::CTIME, ts_ctime);
+    }
+    result = create_directory_object(to, stbuf.st_mode, ts_atime, ts_mtime, ts_ctime, stbuf.st_uid, stbuf.st_gid, pxattrvalue);
+
+    StatCache::getStatCacheData()->DelStat(to);
+
+    return result;
+}
+
+static int rename_directory(const char* from, const char* to)
+{
+    S3ObjList head;
+    s3obj_list_t headlist;
+    std::string strfrom  = from ? from : "";   // from is without "/".
+    std::string strto    = to ? to : "";       // to is without "/" too.
+    std::string basepath = strfrom + "/";
+    std::string newpath;                       // should be from name(not used)
+    std::string nowcache;                      // now cache path(not used)
+    dirtype DirType;
+    bool normdir;
+    std::vector<mvnode> mvnodes;
+    struct stat stbuf;
+    int result;
+    bool is_dir;
+
+    S3FS_PRN_INFO1("[from=%s][to=%s]", from, to);
+
+    //
+    // Initiate and Add base directory into mvnode struct.
+    //
+    strto += "/";
+    if(0 == chk_dir_object_type(from, newpath, strfrom, nowcache, nullptr, &DirType) && dirtype::UNKNOWN != DirType){
+        if(dirtype::NOOBJ != DirType){
+            normdir = false;
+        }else{
+            normdir = true;
+            strfrom = from;               // from directory is not removed, but from directory attr is needed.
+        }
+        mvnodes.emplace_back(strfrom, strto, true, normdir);
+    }else{
+        // Something wrong about "from" directory.
+    }
+
+    //
+    // get a list of all the objects
+    //
+    // No delimiter is specified, the result(head) is all object keys.
+    // (CommonPrefixes is empty, but all object is listed in Key.)
+    if(0 != (result = list_bucket(basepath.c_str(), head, nullptr))){
+        S3FS_PRN_ERR("list_bucket returns error.");
+        return result;
+    }
+    head.GetNameList(headlist);                                             // get name without "/".
+    StatCache::getStatCacheData()->GetNotruncateCache(basepath, headlist);  // Add notruncate file name from stat cache
+    S3ObjList::MakeHierarchizedList(headlist, false);                       // add hierarchized dir.
+
+    s3obj_list_t::const_iterator liter;
+    for(liter = headlist.begin(); headlist.end() != liter; ++liter){
+        // make "from" and "to" object name.
+        std::string from_name = basepath + (*liter);
+        std::string to_name   = strto + (*liter);
+        std::string etag      = head.GetETag((*liter).c_str());
+
+        // Check subdirectory.
+        StatCache::getStatCacheData()->HasStat(from_name, etag.c_str()); // Check ETag
+        if(0 != get_object_attribute(from_name.c_str(), &stbuf, nullptr)){
+            S3FS_PRN_WARN("failed to get %s object attribute.", from_name.c_str());
+            continue;
+        }
+        if(S_ISDIR(stbuf.st_mode)){
+            is_dir = true;
+            if(0 != chk_dir_object_type(from_name.c_str(), newpath, from_name, nowcache, nullptr, &DirType) || dirtype::UNKNOWN == DirType){
+                S3FS_PRN_WARN("failed to get %s%s object directory type.", basepath.c_str(), (*liter).c_str());
+                continue;
+            }
+            if(dirtype::NOOBJ != DirType){
+                normdir = false;
+            }else{
+                normdir = true;
+                from_name = basepath + (*liter);  // from directory is not removed, but from directory attr is needed.
+            }
+        }else{
+            is_dir  = false;
+            normdir = false;
+        }
+
+        // push this one onto the stack
+        mvnodes.emplace_back(from_name, to_name, is_dir, normdir);
+    }
+
+    std::sort(mvnodes.begin(), mvnodes.end(), [](const mvnode& a, const mvnode& b) { return a.old_path < b.old_path; });
+
+    //
+    // rename
+    //
+    // rename directory objects.
+    for(auto mn_cur = mvnodes.cbegin(); mn_cur != mvnodes.cend(); ++mn_cur){
+        if(mn_cur->is_dir && !mn_cur->old_path.empty()){
+            std::string xattrvalue;
+            const char* pxattrvalue;
+            if(get_meta_xattr_value(mn_cur->old_path.c_str(), xattrvalue)){
+                pxattrvalue = xattrvalue.c_str();
+            }else{
+                pxattrvalue = nullptr;
+            }
+
+            // [NOTE]
+            // The ctime is updated only for the top (from) directory.
+            // Other than that, it will not be updated.
+            //
+            if(0 != (result = clone_directory_object(mn_cur->old_path.c_str(), mn_cur->new_path.c_str(), (strfrom == mn_cur->old_path), pxattrvalue))){
+                S3FS_PRN_ERR("clone_directory_object returned an error(%d)", result);
+                return result;
+            }
+        }
+    }
+
+    // iterate over the list - copy the files with rename_object
+    // does a safe copy - copies first and then deletes old
+    for(auto mn_cur = mvnodes.begin(); mn_cur != mvnodes.end(); ++mn_cur){
+        if(!mn_cur->is_dir){
+            if(!nocopyapi && !norenameapi){
+                result = rename_object(mn_cur->old_path.c_str(), mn_cur->new_path.c_str(), false);          // keep ctime
+            }else{
+                result = rename_object_nocopy(mn_cur->old_path.c_str(), mn_cur->new_path.c_str(), false);   // keep ctime
+            }
+            if(0 != result){
+                S3FS_PRN_ERR("rename_object returned an error(%d)", result);
+                return result;
+            }
+        }
+    }
+
+    // Iterate over old the directories, bottoms up and remove
+    for(auto mn_cur = mvnodes.rbegin(); mn_cur != mvnodes.rend(); ++mn_cur){
+        if(mn_cur->is_dir && !mn_cur->old_path.empty()){
+            if(!(mn_cur->is_normdir)){
+                if(0 != (result = posix_s3fs_rmdir(mn_cur->old_path.c_str()))){
+                    S3FS_PRN_ERR("posix_s3fs_rmdir returned an error(%d)", result);
+                    return result;
+                }
+            }else{
+                // cache clear.
+                StatCache::getStatCacheData()->DelStat(mn_cur->old_path);
+            }
+        }
+    }
+
+    return 0;
+}
+
+int posix_s3fs_rename(const char* _from, const char* _to)
+{
+    WTF8_ENCODE(from)
+    WTF8_ENCODE(to)
+    struct stat buf;
+    int result;
+
+    S3FS_PRN_INFO("[from=%s][to=%s]", from, to);
+
+    if(0 != (result = check_parent_object_access(to, W_OK | X_OK))){
+        // not permit writing "to" object parent dir.
+        return result;
+    }
+    if(0 != (result = check_parent_object_access(from, W_OK | X_OK))){
+        // not permit removing "from" object parent dir.
+        return result;
+    }
+    if(0 != (result = get_object_attribute(from, &buf, nullptr))){
+        return result;
+    }
+    if(0 != (result = directory_empty(to))){
+        return result;
+    }
+
+    // flush pending writes if file is open
+    {   // scope for AutoFdEntity
+        AutoFdEntity autoent;
+        FdEntity*    ent;
+        if(nullptr != (ent = autoent.OpenExistFdEntity(from, O_RDWR))){
+            if(0 != (result = ent->Flush(autoent.GetPseudoFd(), AutoLock::NONE, true))){
+                S3FS_PRN_ERR("could not upload file(%s): result=%d", to, result);
+                return result;
+            }
+            StatCache::getStatCacheData()->DelStat(from);
+        }
+    }
+
+    // files larger than 5GB must be modified via the multipart interface
+    if(S_ISDIR(buf.st_mode)){
+        result = rename_directory(from, to);
+    }else if(!nomultipart && buf.st_size >= singlepart_copy_limit){
+        result = rename_large_object(from, to);
+    }else{
+        if(!nocopyapi && !norenameapi){
+            result = rename_object(from, to, true);             // update ctime
+        }else{
+            result = rename_object_nocopy(from, to, true);      // update ctime
+        }
+    }
+
+    // update parent directory timestamp
+    //
+    // [NOTE]
+    // already updated timestamp for original path in above functions.
+    //
+    int update_result;
+    if(0 != (update_result = update_mctime_parent_directory(to))){
+        S3FS_PRN_ERR("succeed to create the file/directory(%s), but could not update timestamp of its parent directory(result=%d).", to, update_result);
+    }
+
+    S3FS_MALLOCTRIM(0);
+
     return result;
 }
 
@@ -2614,20 +3256,25 @@ static int init_config(std::string configpath) {
         std::cout << "set_bucket: " << ret << std::endl;
     }
 
+    std::cout << "utiltiy mode: " << int(utility_mode) << std::endl;
+    std::cout << "mountpoint: " << mountpoint << std::endl;
+
     // mountpoint config
     // the second NONOPT option is the mountpoint(not utility mode)
     if(mountpoint.empty() && utility_incomp_type::NO_UTILITY_MODE == utility_mode){
         // save the mountpoint and do some basic error checking
         mountpoint = config["mountpoint"];
         struct stat stbuf;
-
+        std::cout << "set mount point: " << mountpoint << std::endl;
 // In MSYS2 environment with WinFsp, it is not needed to create the mount point before mounting.
 // Also it causes a conflict with WinFsp's validation, so disabling it.
 #ifdef __MSYS__
         memset(&stbuf, 0, sizeof stbuf);
         set_mountpoint_attribute(stbuf);
 #else
+	std::cout << "???????" << std::endl;
         if(stat(mountpoint.c_str(), &stbuf) == -1){
+            std::cout << "stat failed! err: " << strerror(errno) << std::endl;
             // check stale mountpoint
             if(errno == ENOTCONN){
                 print_umount_message(mountpoint, true);
@@ -2636,6 +3283,9 @@ static int init_config(std::string configpath) {
             }
             return -1;
         }
+	
+	std::cout << "stat mount point success! " << mountpoint << std::endl;
+
         if(!(S_ISDIR(stbuf.st_mode))){
             S3FS_PRN_EXIT("MOUNTPOINT: %s is not a directory.", mountpoint.c_str());
             return -1;
@@ -2644,6 +3294,8 @@ static int init_config(std::string configpath) {
             S3FS_PRN_EXIT("MOUNTPOINT: %s permission denied.", mountpoint.c_str());
             return -1;
         }
+
+	std::cout << "set mount point attr success! noempty: " << nonempty << std::endl;
 
         if(!nonempty){
             const struct dirent *ent;
@@ -2663,6 +3315,8 @@ static int init_config(std::string configpath) {
         }
 #endif
     }
+    
+    std::cout << "mount success!" << mountpoint << std::endl;
 
     // passwd_file
     std::string passwd_filename = config["passwd_file"];
@@ -2672,6 +3326,8 @@ static int init_config(std::string configpath) {
         std::cerr << "Failed to parse passwd_file=" << passwd_filename << ": " << strerror(-ret);
         return -1;
     }
+    
+    std::cout << "load passwd sucess!" << passwd_filename << std::endl;
 
     // url
     s3host = config["url"];
@@ -2690,6 +3346,8 @@ static int init_config(std::string configpath) {
         S3FS_PRN_EXIT("option url has invalid format, missing http / https protocol");
         return -1;
     }
+
+    std::cout << "parse s3 host success! " << s3host << std::endl;
 
     if (config.find("use_path_request_style") != config.end()) {
         pathrequeststyle = true;
@@ -2723,9 +3381,9 @@ void s3fs_global_init() {
    
     
     S3fsLog::SetLogLevel(S3fsLog::LEVEL_DBG);
-    S3fsLog::SetLogfile("./log/posix_s3fs.log");
+    S3fsLog::SetLogfile("/opt/jycachefs/log/posix_s3fs.log");
     //S3fsLog::debug_level = S3fsLog::LEVEL_DBG;
-    std::string configpath = "./conf/posix_s3fs.conf";
+    std::string configpath = "/opt/jycachefs/conf/posix_s3fs.conf";
 
     posixcontext.uid = geteuid();
     posixcontext.gid = getegid();
@@ -2970,7 +3628,7 @@ void s3fs_global_init() {
 void s3fs_global_uninit() {
 }
 
-static __attribute__((destructor)) void Clean(void) {   
+void s3fs_stop() {
     // Destroy curl
     s3fs_destroy();
 
